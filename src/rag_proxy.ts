@@ -28,7 +28,7 @@ async function searchPostgres(query: string): Promise<string | null> {
   try {
     await sql.begin(async (tx: any) => {
       // Set RLS scope
-await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
       
       const results = await tx`
         WITH vector_search AS (
@@ -110,6 +110,20 @@ Deno.serve({ port: 8000, hostname: "0.0.0.0" }, async (req) => {
         }
       }
     }
+
+    // ====================================================================
+    // NEW: DEBUG FILE DUMP
+    // ====================================================================
+    try {
+      await Deno.mkdir("debug_logs", { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const logFile = `debug_logs/prompt_dump_${timestamp}.json`;
+      await Deno.writeTextFile(logFile, JSON.stringify(body, null, 2));
+      console.log(`[DEBUG] Successfully dumped full prompt payload to: ${logFile}`);
+    } catch (e) {
+      console.error("[DEBUG] Failed to write prompt debug log:", e);
+    }
+    // ====================================================================
 
     return fetch(`${LM_STUDIO_URL}${url.pathname}`, {
       method: "POST",
