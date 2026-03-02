@@ -69,6 +69,46 @@ async function searchPostgres(query: string): Promise<string | null> {
   return retrievedContext;
 }
 
+async function fetchPersonaContext(embedding: number[]): Promise<string | null> {
+  let personaContext: string | null = null;
+  
+  try {
+    await sql.begin(async (tx: any) => {
+      // Set RLS scope for the query
+      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      
+      const results = await tx`
+        WITH core_persona AS (
+          SELECT category, content, 1.0 AS relevance_score
+          FROM agent_persona
+          WHERE is_always_active = true
+        ),
+        situational_persona AS (
+          SELECT category, content, 1 - (embedding <=> ${JSON.stringify(embedding)}) AS relevance_score
+          FROM agent_persona
+          WHERE is_always_active = false
+          ORDER BY embedding <=> ${JSON.stringify(embedding)}
+          LIMIT 3
+        )
+        SELECT * FROM core_persona
+        UNION ALL
+        SELECT * FROM situational_persona
+        ORDER BY relevance_score DESC;
+      `;
+
+      if (results.length > 0) {
+        // Format the rules into a clean markdown block
+        personaContext = results.map((r: any) => `* **[${r.category}]**: ${r.content}`).join("\n");
+        console.log(`\n[DEBUG] --- Loaded ${results.length} Persona Rules from Database ---`);
+      }
+    });
+  } catch (err) {
+    console.error("[DEBUG] Persona fetch failed:", err);
+  }
+
+  return personaContext;
+}
+
 Deno.serve({ port: 8000, hostname: "0.0.0.0" }, async (req) => {
   const url = new URL(req.url);
   
@@ -99,20 +139,34 @@ Deno.serve({ port: 8000, hostname: "0.0.0.0" }, async (req) => {
         console.log(`\n==================================================`);
         console.log(`[REQUEST] Intercepted user message: "${userText}"`);
         
-        const context = await searchPostgres(userText);
+        // 1. Generate the embedding ONCE for both searches
+        const embedding = await getEmbedding(userText);
         
-        if (context) {
-          console.log("\n[INJECTION] Injecting context directly into the user's prompt...");
-          
-          const injectionString = `[SYSTEM RAG CONTEXT]\nThe following historical memories were retrieved from the database. Use them to help answer the user's query if they are relevant:\n\n${context}\n\n[END CONTEXT]\n\n`;
+        // 2. Fetch Memories and Persona concurrently to save time
+        const [memoryContext, personaContext] = await Promise.all([
+          searchPostgres(userText), // Uses the text for hybrid FTS search
+          fetchPersonaContext(embedding) // Uses the vector for persona search
+        ]);
+        
+        // 3. Inject Situational Memories into the User Message
+        if (memoryContext) {
+          console.log("\n[INJECTION] Injecting memory context directly into the user's prompt...");
+          const injectionString = `[SYSTEM RAG CONTEXT]\nThe following historical memories were retrieved from the database. Use them to help answer the user's query if they are relevant:\n\n${memoryContext}\n\n[END CONTEXT]\n\n`;
 
           if (typeof lastMessage.content === "string") {
             body.messages[lastUserIndex].content = injectionString + lastMessage.content;
           } else if (Array.isArray(lastMessage.content)) {
-            body.messages[lastUserIndex].content.unshift({
-              type: "text",
-              text: injectionString
-            });
+            body.messages[lastUserIndex].content.unshift({ type: "text", text: injectionString });
+          }
+        }
+
+        // 4. Inject the Identity into the System Prompt
+        if (personaContext) {
+          const systemIndex = body.messages.findIndex((m: any) => m.role === "system");
+          if (systemIndex !== -1) {
+             console.log("\n[INJECTION] Injecting dynamic database persona into the system prompt...");
+             const identityString = `\n\n## Dynamic Database Persona\nThe following core operational rules were loaded from your database:\n${personaContext}\n`;
+             body.messages[systemIndex].content += identityString;
           }
         }
       }
