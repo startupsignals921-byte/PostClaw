@@ -176,8 +176,8 @@ const openclawPostgresPlugin = {
 
             - **Retrieval:** Relevant memories (with UUID tags) are auto-injected.
             - **Search:** Use the \`memory_search\` tool when you need to recall facts not in the current context.
-            - **Correct/update facts:** Use the \`memory_update\` tool when a fact is incorrect, outdated, or needs to be updated.
-            - **Save new facts:** Use the \`memory_store\` tool when a new fact is learned.
+            - **Correct/update facts:** Use the \`memory_update\` tool when a fact is incorrect, outdated, or needs to be updated. When using memory_update, ALWAYS assign an appropriate 'tier' and 'category'.
+            - **Save new facts:** Use the \`memory_store\` tool when a new fact is learned. When using memory_store, ALWAYS assign an appropriate 'tier' (e.g., 'permanent' for core user identity, 'daily' for current tasks) and 'category'.
             - **Link related memories:** Use the \`memory_link\` tool when two memories are related.
             - **Store a tool:** Use the \`tool_store\` tool when a new tool schema is learned.
             - **Sleep cycle** (consolidates short-term memory): \`deno run -A /home/cl/.openclaw/workspace/scripts/sleep_cycle.ts "${agentId}"\`
@@ -278,13 +278,19 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "memory_store",
-        description: "Store a new durable fact in long-term semantic memory. Automatically deduplicates via content hash.",
+        description: "Store a new durable fact. You can categorize it, set volatility, and add metadata.",
         parameters: Type.Object({
           content: Type.String({ description: "The fact or knowledge to store" }),
-          scope: Type.Optional(Type.Union([Type.Literal("private"), Type.Literal("shared"), Type.Literal("global")], { description: "Visibility scope. Default: private", default: "private" })),
+          scope: Type.Optional(Type.Union([Type.Literal("private"), Type.Literal("shared"), Type.Literal("global")], { default: "private" })),
+          category: Type.Optional(Type.String({ description: "A short categorical tag (e.g., 'preference', 'project_detail')" })),
+          volatility: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], { default: "low" })),
+          tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily" })),
+          metadata: Type.Optional(Type.Any({ description: "A JSON object of additional contextual key-value pairs" }))
         }),
-        async execute(_id: string, args: { content: string; scope?: "private" | "shared" | "global" }) {
-          const result = await storeMemory(args.content, args.scope);
+        async execute(_id: string, args: any) {
+          // Pass the destructured args into the options object
+          const { content, scope, ...options } = args;
+          const result = await storeMemory(content, scope, options);
           return JSON.stringify(result);
         },
       },
@@ -295,13 +301,18 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "memory_update",
-        description: "Correct or update an existing memory. Archives the old fact and creates a new one with a causal chain link.",
+        description: "Correct or update an existing memory. Archives the old fact and creates a new one with a causal chain link. You can assign categories, volatility, and metadata.",
         parameters: Type.Object({
           old_memory_id: Type.String({ description: "UUID of the outdated memory to supersede" }),
           new_fact: Type.String({ description: "The corrected or updated fact" }),
+          category: Type.Optional(Type.String({ description: "A short categorical tag (e.g., 'preference', 'project_detail')" })),
+          volatility: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], { default: "low" })),
+          tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily" })),
+          metadata: Type.Optional(Type.Any({ description: "A JSON object of additional contextual key-value pairs" }))
         }),
-        async execute(_id: string, args: { old_memory_id: string; new_fact: string }) {
-          const result = await updateMemory(args.old_memory_id, args.new_fact);
+        async execute(_id: string, args: any) {
+          const { old_memory_id, new_fact, ...options } = args;
+          const result = await updateMemory(old_memory_id, new_fact, options);
           return JSON.stringify(result);
         },
       },
