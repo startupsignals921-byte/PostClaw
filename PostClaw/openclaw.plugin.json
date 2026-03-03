@@ -1,0 +1,10 @@
+{
+    "id": "postclaw",
+    "name": "PostClaw",
+    "description": "PostgreSQL-backed RAG, memory, and persona management",
+    "configSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+    }
+}

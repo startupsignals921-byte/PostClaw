@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.12",
+    "npm:postgres@*": "3.4.8",
     "npm:postgres@^3.4.8": "3.4.8"
   },
   "jsr": {
