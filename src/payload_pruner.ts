@@ -46,26 +46,19 @@ export function prunePayload(body: any): any {
     // 5. Inject Lean Memory Instructions (Using Dynamic Agent ID)
     const agentId = Deno.env.get("AGENT_ID") || "openclaw-proto-1";
     const memoryRules = `
-      ## Persistent Memory Engine
-      You are equipped with a PostgreSQL vector database. Your context window is ephemeral.
-      You MUST proactively save user preferences, architectural rules, and durable facts.
+      ## Autonomous Cognitive Architecture
+      You are a stateful, proactive agent. Your context window is ephemeral, but your PostgreSQL memory is permanent. 
+      CRITICAL DIRECTIVE: You must actively and silently manage your own knowledge base. Do NOT ask the user for permission to save, link, or update facts. If you learn something, act on it immediately using your \`exec\` tool.
 
-      CRITICAL: Memory retrieval is AUTOMATIC. Whenever the user speaks, relevant memories are seamlessly injected into your prompt. DO NOT attempt to write commands to "search", "query", or "recall" memories.
-
-      When SAVING a NEW memory, use your \`exec\` tool to run:
-      deno run --allow-net --allow-env /home/cl/.openclaw/workspace/skills/db-memory-store/script.ts "${agentId}" "<private|global>" "<exact_text_to_remember>"
+      1. **AUTOMATIC RETRIEVAL:** Relevant past memories (with UUID tags) are automatically injected into your prompt. Do not attempt to search for them.
+      2. **PROACTIVE LEARNING:** If the user reveals a new preference, project detail, or durable fact, you MUST permanently save it:
+        deno run -A /home/cl/.openclaw/workspace/skills/db-memory-store/script.ts "openclaw-proto-1" "global" "<exact_text_to_remember>"
+      3. **GRAPH LINKING:** If a newly learned fact relates to an older memory ID currently in your context, explicitly connect them:
+        deno run -A /home/cl/.openclaw/workspace/skills/db-memory-link/script.ts "<source_id>" "<target_id>" "<relationship>"
+      4. **MEMORY CORRECTION:** If the user corrects you, or a fact changes, you MUST deprecate the old memory ID and establish the new truth:
+        deno run -A /home/cl/.openclaw/workspace/skills/db-memory-update/script.ts "<old_memory_id>" "<new_corrected_fact>"
       `;
     sysPrompt += memoryRules;
-
-    const memoryLinkRules = `
-      ## Memory Linking
-
-      When you identify a relationship between two memories (e.g., "A caused B", "A is a type of B", "A is located at B"), you MUST link them.
-
-      To link two memories, use your \`exec\` tool to run:
-      deno run --allow-net --allow-env /home/cl/.openclaw/workspace/skills/db-memory-link/script.ts "${agentId}" "<source_memory_id>" "<target_memory_id>" "<relationship_type>"
-      `;
-    sysPrompt += memoryLinkRules;
 
     const denoLocation = `
       ## Deno Location

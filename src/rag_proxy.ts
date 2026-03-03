@@ -41,7 +41,7 @@ async function searchPostgres(userText: string): Promise<string | null> {
           FROM memory_semantic
           WHERE agent_id = ${AGENT_ID} AND is_archived = false
           ORDER BY similarity DESC
-          LIMIT 3
+          LIMIT 7
         ),
         linked_matches AS (
           SELECT m.id, m.content, 0.8 AS similarity, e.relationship_type, sm.id AS source_match_id
@@ -54,7 +54,7 @@ async function searchPostgres(userText: string): Promise<string | null> {
         UNION ALL
         SELECT id, content, similarity, 'Linked: ' || relationship_type as relation FROM linked_matches
         ORDER BY similarity DESC
-        LIMIT 6;
+        LIMIT 15;
       `;
 
       if (results.length > 0) {
