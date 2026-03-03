@@ -83,6 +83,37 @@ export async function logEpisodicMemory(
   }
 }
 
+/**
+ * Log a single tool call execution to memory_episodic.
+ */
+export async function logEpisodicToolCall(
+  toolCallId: string,
+  toolName: string,
+  toolArgs: string,
+  embedding: number[]
+): Promise<void> {
+  const summary = `Agent executed tool: ${toolName} with arguments: ${toolArgs}`;
+
+  try {
+    await sql.begin(async (tx: any) => {
+      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+
+      await tx`
+        INSERT INTO memory_episodic (
+          agent_id, session_id, event_summary, event_type, embedding, embedding_model, metadata
+        ) VALUES (
+          ${AGENT_ID}, 'active-session', ${summary}, 'tool_execution',
+          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
+          ${JSON.stringify({ tool_call_id: toolCallId, tool_name: toolName })}
+        )
+      `;
+    });
+    console.log(`[EPISODIC] 🛠️  Logged tool execution (${toolName})`);
+  } catch (err) {
+    console.error("[EPISODIC] Failed to log tool call:", err);
+  }
+}
+
 // =============================================================================
 // PERSONA CONTEXT
 // =============================================================================
@@ -133,11 +164,21 @@ export async function fetchPersonaContext(embedding: number[]): Promise<string |
 // DYNAMIC TOOLS
 // =============================================================================
 
+/** OpenAI-compatible tool definition (function calling format). */
+export interface ChatCompletionTool {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
 /**
  * Fetch dynamic tools from context_environment based on embedding similarity.
  */
-export async function fetchDynamicTools(embedding: number[]): Promise<any[]> {
-  let dynamicTools: any[] = [];
+export async function fetchDynamicTools(embedding: number[]): Promise<ChatCompletionTool[]> {
+  let dynamicTools: ChatCompletionTool[] = [];
 
   try {
     await sql.begin(async (tx: any) => {
@@ -152,7 +193,8 @@ export async function fetchDynamicTools(embedding: number[]): Promise<any[]> {
       `;
 
       if (results.length > 0) {
-        dynamicTools = results.map((r: any) => JSON.parse(r.context_data));
+        dynamicTools = results.map((r: any) => JSON.parse(r.context_data) as ChatCompletionTool);
+        console.log(`[TOOLS] 🔧 Loaded ${dynamicTools.length} dynamic tool(s): ${dynamicTools.map(t => t.function.name).join(", ")}`);
       }
     });
   } catch (err) {

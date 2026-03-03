@@ -34,7 +34,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
     throw new Error(`Embedding API error: ${res.status} ${res.statusText}`);
   }
 
-  const data = await res.json();
+  const data: any = await res.json();
   const embedding: number[] = data.data[0].embedding;
 
   console.log(`[EMBED] Generated ${embedding.length}-dim vector for: "${text.substring(0, 50)}..."`);
