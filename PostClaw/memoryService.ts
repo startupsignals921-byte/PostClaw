@@ -1,4 +1,6 @@
 import { sql, AGENT_ID, EMBEDDING_MODEL, getEmbedding, hashContent } from "./db.js";
+import { z } from "zod";
+import { StoreMemoryInputSchema, UpdateMemoryInputSchema } from "./schemas/validation.js";
 
 // =============================================================================
 // SEMANTIC SEARCH + GRAPH TRAVERSAL
@@ -237,8 +239,6 @@ export async function fetchDynamicTools(embedding: number[]): Promise<ChatComple
 
 // =============================================================================
 // MEMORY STORE (replaces db-memory-store skill)
-// =============================================================================
-
 export interface MemoryOptions {
   category?: string;
   source_uri?: string;
@@ -261,8 +261,10 @@ export async function storeMemory(
   options: MemoryOptions = {}
 ): Promise<{ id: string | null; status: string }> {
   try {
-    const embedding = await getEmbedding(content);
-    const contentHash = hashContent(content);
+    const validated = StoreMemoryInputSchema.parse({ content, scope, options: Object.keys(options).length > 0 ? options : undefined });
+
+    const embedding = await getEmbedding(validated.content);
+    const contentHash = hashContent(validated.content);
 
     const result = await sql.begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
@@ -274,9 +276,9 @@ export async function storeMemory(
         ) VALUES (
           ${AGENT_ID}, ${scope}, ${content}, ${contentHash},
           ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
-          ${options.category || null}, ${options.source_uri || null}, ${options.volatility || 'low'}, ${options.is_pointer || false},
-          ${options.token_count || 0}, ${options.confidence || 0.5}, ${options.tier || 'daily'}, ${options.usefulness_score || 0.0},
-          ${options.expires_at || null}, ${options.metadata ? JSON.stringify(options.metadata) : '{}'}
+          ${validated.options?.category || null}, ${validated.options?.source_uri || null}, ${validated.options?.volatility || 'low'}, ${validated.options?.is_pointer || false},
+          ${validated.options?.token_count || 0}, ${validated.options?.confidence || 0.5}, ${validated.options?.tier || 'daily'}, ${validated.options?.usefulness_score || 0.0},
+          ${validated.options?.expires_at || null}, ${validated.options?.metadata ? JSON.stringify(validated.options.metadata) : '{}'}
         )
         ON CONFLICT (agent_id, content_hash) DO NOTHING
         RETURNING id;
@@ -291,7 +293,11 @@ export async function storeMemory(
       console.log(`[MEMORY] Duplicate — fact already exists.`);
       return { id: null, status: "duplicate" };
     }
-  } catch (err) {
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      console.error("[MEMORY] Validation failed:", (err as any).errors);
+      return { id: null, status: "error: validation failed" };
+    }
     console.error("[MEMORY] Failed to store:", err);
     return { id: null, status: `error: ${err}` };
   }
@@ -311,8 +317,10 @@ export async function updateMemory(
   options: MemoryOptions = {}
 ): Promise<{ newId: string | null; status: string }> {
   try {
-    const embedding = await getEmbedding(newFact);
-    const contentHash = hashContent(newFact);
+    const validated = UpdateMemoryInputSchema.parse({ oldMemoryId, newFact, options: Object.keys(options).length > 0 ? options : undefined });
+
+    const embedding = await getEmbedding(validated.newFact);
+    const contentHash = hashContent(validated.newFact);
 
     const result = await sql.begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
@@ -323,11 +331,11 @@ export async function updateMemory(
           agent_id, access_scope, content, content_hash, embedding, embedding_model,
           category, source_uri, volatility, is_pointer, token_count, confidence, tier, usefulness_score, expires_at, metadata
         ) VALUES (
-          ${AGENT_ID}, 'global', ${newFact}, ${contentHash},
+          ${AGENT_ID}, 'global', ${validated.newFact}, ${contentHash},
           ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
-          ${options.category || null}, ${options.source_uri || null}, ${options.volatility || 'low'}, ${options.is_pointer || false},
-          ${options.token_count || 0}, ${options.confidence || 0.5}, ${options.tier || 'daily'}, ${options.usefulness_score || 0.0},
-          ${options.expires_at || null}, ${options.metadata ? JSON.stringify(options.metadata) : '{}'}
+          ${validated.options?.category || null}, ${validated.options?.source_uri || null}, ${validated.options?.volatility || 'low'}, ${validated.options?.is_pointer || false},
+          ${validated.options?.token_count || 0}, ${validated.options?.confidence || 0.5}, ${validated.options?.tier || 'daily'}, ${validated.options?.usefulness_score || 0.0},
+          ${validated.options?.expires_at || null}, ${validated.options?.metadata ? JSON.stringify(validated.options.metadata) : '{}'}
         )
         RETURNING id;
       `;
@@ -337,7 +345,7 @@ export async function updateMemory(
       await tx`
         UPDATE memory_semantic
         SET is_archived = true, superseded_by = ${newId}
-        WHERE id = ${oldMemoryId} AND agent_id = ${AGENT_ID};
+        WHERE id = ${validated.oldMemoryId} AND agent_id = ${AGENT_ID};
       `;
 
       return newId;
@@ -345,7 +353,11 @@ export async function updateMemory(
 
     console.log(`[MEMORY] Updated. Old (${oldMemoryId.substring(0, 8)}) deprecated, new truth: ${result.substring(0, 8)}`);
     return { newId: result, status: "updated" };
-  } catch (err) {
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      console.error("[MEMORY] Validation failed:", (err as any).errors);
+      return { newId: null, status: "error: validation failed" };
+    }
     console.error("[MEMORY] Failed to update:", err);
     return { newId: null, status: `error: ${err}` };
   }
