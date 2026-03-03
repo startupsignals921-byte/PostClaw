@@ -31,12 +31,15 @@ export async function searchPostgres(userText: string): Promise<string | null> {
           JOIN memory_semantic m ON (e.target_memory_id = m.id OR e.source_memory_id = m.id)
           JOIN semantic_matches sm ON (e.source_memory_id = sm.id OR e.target_memory_id = sm.id)
           WHERE e.agent_id = ${AGENT_ID} AND m.id != sm.id AND m.is_archived = false
+        ),
+        final_matches AS (
+          SELECT id, content, similarity, NULL as relationship_type FROM semantic_matches
+          UNION ALL
+          SELECT id, content, similarity, relationship_type FROM linked_matches
+          ORDER BY similarity DESC
+          LIMIT 15
         )
-        SELECT id, content, similarity, NULL as relationship_type FROM semantic_matches
-        UNION ALL
-        SELECT id, content, similarity, relationship_type FROM linked_matches
-        ORDER BY similarity DESC
-        LIMIT 15;
+        SELECT * FROM final_matches;
       `;
 
       if (results.length > 0) {
@@ -49,6 +52,15 @@ export async function searchPostgres(userText: string): Promise<string | null> {
             return `[ID: ${r.id}] (${label}) - ${r.content}`;
           })
           .join("\n");
+
+        // Update tracking columns
+        const extractedIds = results.map((r: any) => r.id);
+        await tx`
+          UPDATE memory_semantic
+          SET access_count = access_count + 1,
+              last_accessed_at = CURRENT_TIMESTAMP
+          WHERE id IN ${sql(extractedIds)}
+        `;
       }
     });
   } catch (err) {
@@ -227,12 +239,26 @@ export async function fetchDynamicTools(embedding: number[]): Promise<ChatComple
 // MEMORY STORE (replaces db-memory-store skill)
 // =============================================================================
 
+export interface MemoryOptions {
+  category?: string;
+  source_uri?: string;
+  volatility?: "low" | "medium" | "high";
+  is_pointer?: boolean;
+  token_count?: number;
+  confidence?: number;
+  tier?: "volatile" | "session" | "daily" | "stable" | "permanent";
+  usefulness_score?: number;
+  expires_at?: Date | null;
+  metadata?: Record<string, any>;
+}
+
 /**
  * Store a new semantic memory fact. Deduplicates via content_hash.
  */
 export async function storeMemory(
   content: string,
-  scope: "private" | "shared" | "global" = "private"
+  scope: "private" | "shared" | "global" = "private",
+  options: MemoryOptions = {}
 ): Promise<{ id: string | null; status: string }> {
   try {
     const embedding = await getEmbedding(content);
@@ -243,10 +269,14 @@ export async function storeMemory(
 
       const rows = await tx`
         INSERT INTO memory_semantic (
-          agent_id, access_scope, content, content_hash, embedding, embedding_model
+          agent_id, access_scope, content, content_hash, embedding, embedding_model,
+          category, source_uri, volatility, is_pointer, token_count, confidence, tier, usefulness_score, expires_at, metadata
         ) VALUES (
           ${AGENT_ID}, ${scope}, ${content}, ${contentHash},
-          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL}
+          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
+          ${options.category || null}, ${options.source_uri || null}, ${options.volatility || 'low'}, ${options.is_pointer || false},
+          ${options.token_count || 0}, ${options.confidence || 0.5}, ${options.tier || 'daily'}, ${options.usefulness_score || 0.0},
+          ${options.expires_at || null}, ${options.metadata ? JSON.stringify(options.metadata) : '{}'}
         )
         ON CONFLICT (agent_id, content_hash) DO NOTHING
         RETURNING id;
@@ -277,7 +307,8 @@ export async function storeMemory(
  */
 export async function updateMemory(
   oldMemoryId: string,
-  newFact: string
+  newFact: string,
+  options: MemoryOptions = {}
 ): Promise<{ newId: string | null; status: string }> {
   try {
     const embedding = await getEmbedding(newFact);
@@ -289,10 +320,14 @@ export async function updateMemory(
       // Insert the new truth
       const newMem = await tx`
         INSERT INTO memory_semantic (
-          agent_id, access_scope, content, content_hash, embedding, embedding_model
+          agent_id, access_scope, content, content_hash, embedding, embedding_model,
+          category, source_uri, volatility, is_pointer, token_count, confidence, tier, usefulness_score, expires_at, metadata
         ) VALUES (
           ${AGENT_ID}, 'global', ${newFact}, ${contentHash},
-          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL}
+          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
+          ${options.category || null}, ${options.source_uri || null}, ${options.volatility || 'low'}, ${options.is_pointer || false},
+          ${options.token_count || 0}, ${options.confidence || 0.5}, ${options.tier || 'daily'}, ${options.usefulness_score || 0.0},
+          ${options.expires_at || null}, ${options.metadata ? JSON.stringify(options.metadata) : '{}'}
         )
         RETURNING id;
       `;
