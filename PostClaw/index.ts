@@ -180,12 +180,12 @@ const openclawPostgresPlugin = {
             You are a stateful agent. Your context window is ephemeral but your PostgreSQL memory is permanent.
             Silently manage your knowledge — never ask permission to save, link, or update facts.
 
-            - **Retrieval:** Relevant memories (with UUID tags) are auto-injected. If a relevant memory is not found, perform a search for it.
-            - **Search:** \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-search/script.ts "${agentId}" "<query>"\`
-            - **Save new facts:** \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-store/script.ts "${agentId}" "global" "<fact>"\`
-            - **Link related memories:** \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-link/script.ts "<source_id>" "<target_id>" "<relationship>"\`
-            - **Correct/update facts:** \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-update/script.ts "<old_id>" "<new_fact>"\`
-            - **Store a tool:** \`deno run -A /home/cl/.openclaw/workspace/skills/db-tool-store/script.ts "${agentId}" "<private|global>" "<name>" "<json>"\`
+            - **Retrieval:** Relevant memories (with UUID tags) are auto-injected. If a relevant memory is not in the user message, perform a search for it.
+            - **Search:** Use when a relevant memory is not in the user message. \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-search/script.ts "${agentId}" "<query>"\`
+            - **Correct/update facts:** Use when a fact is incorrect, outdated, or needs to be updated. \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-update/script.ts "<old_id>" "<new_fact>"\`
+            - **Save new facts:** Use when a new fact is learned. \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-store/script.ts "${agentId}" "global" "<fact>"\`
+            - **Link related memories:** Use when two memories are related. \`deno run -A /home/cl/.openclaw/workspace/skills/db-memory-link/script.ts "<source_id>" "<target_id>" "<relationship>"\`
+            - **Store a tool:** Use when a new tool is learned. \`deno run -A /home/cl/.openclaw/workspace/skills/db-tool-store/script.ts "${agentId}" "<private|global>" "<name>" "<json>"\`
             - **Sleep cycle** (consolidates short-term memory): \`deno run -A /home/cl/.openclaw/workspace/scripts/sleep_cycle.ts "${agentId}"\`
             `;
 
