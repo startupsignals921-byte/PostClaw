@@ -179,15 +179,27 @@
     <section id="tab-graph" class="tab-panel">
       <div class="panel-header">
         <h2>Knowledge Graph</h2>
-        <button id="btn-refresh-graph" class="btn-secondary ambient amb-surface amb-fillet amb-elevation-1">
-          🔄 Refresh
-        </button>
+        <div class="graph-controls">
+          <button id="btn-fit-graph" class="btn-secondary ambient amb-surface amb-fillet amb-elevation-1">
+            📐 Fit
+          </button>
+          <button id="btn-toggle-labels" class="btn-secondary ambient amb-surface amb-fillet amb-elevation-1">
+            🏷️ Labels On
+          </button>
+          <button id="btn-refresh-graph" class="btn-secondary ambient amb-surface amb-fillet amb-elevation-1">
+            🔄 Refresh
+          </button>
+        </div>
       </div>
-      <div id="graph-container" class="graph-container ambient amb-surface-darker amb-fillet amb-elevation-2">
-        <svg id="graph-svg"></svg>
-      </div>
-      <div id="graph-info" class="graph-info ambient amb-surface amb-fillet amb-elevation-1">
-        <span id="graph-stats">Click a node for details</span>
+      <div class="graph-wrapper">
+        <div id="graph-container" class="graph-container ambient amb-surface-darker amb-fillet amb-elevation-2">
+          <svg id="graph-svg"></svg>
+          <div id="graph-legend" class="graph-legend"></div>
+        </div>
+        <div id="graph-info" class="graph-info ambient amb-surface amb-fillet amb-elevation-1">
+          <span id="graph-stats">Scroll to zoom • Drag to pan • Click a node for details</span>
+        </div>
+        <div id="graph-detail" class="graph-detail-panel ambient amb-surface amb-chamfer amb-elevation-2" style="display:none;"></div>
       </div>
     </section>
 

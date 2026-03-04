@@ -354,6 +354,8 @@ function debounce(fn, ms) {
 // =============================================================================
 
 let graphSimulation = null;
+let graphZoom = null;
+let graphLabelsVisible = true;
 
 async function loadGraph() {
   try {
@@ -373,45 +375,93 @@ function renderGraph(data) {
 
   svg.attr("viewBox", [0, 0, width, height]);
 
-  // Color scale by tier
+  // ── Defs: glow filters + arrowhead markers ──
+  const defs = svg.append("defs");
+
+  // Glow filter
+  const glow = defs.append("filter").attr("id", "glow");
+  glow.append("feGaussianBlur").attr("stdDeviation", "3").attr("result", "color");
+  glow.append("feMerge").selectAll("feMergeNode")
+    .data(["color", "SourceGraphic"])
+    .join("feMergeNode").attr("in", d => d);
+
+  // Tier colors
   const tierColor = {
     permanent: "#4ade80", stable: "#4f9cf7", daily: "#f7b955",
     session: "#a78bfa", volatile: "#f7555a",
   };
 
-  // Relationship color scale
+  // Relationship colors
   const relColor = {
     related_to: "#6b7280", elaborates: "#4f9cf7", contradicts: "#f7555a",
     depends_on: "#f7b955", part_of: "#a78bfa",
   };
 
+  // Arrowhead markers for each relationship
+  Object.entries(relColor).forEach(([rel, color]) => {
+    defs.append("marker")
+      .attr("id", `arrow-${rel}`)
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 20)
+      .attr("refY", 0)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", color)
+      .attr("opacity", 0.6);
+  });
+
+  // ── Zoom behavior ──
+  const world = svg.append("g").attr("class", "graph-world");
+
+  graphZoom = d3.zoom()
+    .scaleExtent([0.1, 6])
+    .on("zoom", (event) => {
+      world.attr("transform", event.transform);
+    });
+
+  svg.call(graphZoom);
+  // Disable double-click zoom (conflicts with node interaction)
+  svg.on("dblclick.zoom", null);
+
+  // ── Force simulation ──
   if (graphSimulation) graphSimulation.stop();
 
-  graphSimulation = d3.forceSimulation(data.nodes)
-    .force("link", d3.forceLink(data.edges).id(d => d.id).distance(80))
-    .force("charge", d3.forceManyBody().strength(-150))
-    .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide().radius(20));
+  const nodeCount = data.nodes.length;
+  const chargeStrength = nodeCount > 100 ? -60 : nodeCount > 50 ? -80 : -100;
+  const linkDist = nodeCount > 100 ? 80 : 120;
 
-  // Edges
-  const link = svg.append("g")
+  graphSimulation = d3.forceSimulation(data.nodes)
+    .force("link", d3.forceLink(data.edges).id(d => d.id).distance(linkDist))
+    .force("charge", d3.forceManyBody().strength(chargeStrength))
+    .force("center", d3.forceCenter(width / 2, height / 2))
+    .force("collision", d3.forceCollide().radius(d => nodeRadius(d) + 4))
+    .force("x", d3.forceX(width / 2).strength(0.06))
+    .force("y", d3.forceY(height / 2).strength(0.06))
+    .alphaDecay(0.03);
+
+  // ── Edges ──
+  const link = world.append("g").attr("class", "graph-edges")
     .selectAll("line")
     .data(data.edges)
     .join("line")
     .attr("class", "graph-edge")
     .attr("stroke", d => relColor[d.relationship] || "#6b7280")
-    .attr("stroke-width", d => Math.sqrt(d.weight || 1));
+    .attr("stroke-width", d => Math.max(0.5, Math.sqrt(d.weight || 1)))
+    .attr("marker-end", d => `url(#arrow-${d.relationship || "related_to"})`);
 
   // Edge labels
-  const linkLabel = svg.append("g")
+  const linkLabel = world.append("g").attr("class", "graph-edge-labels")
     .selectAll("text")
     .data(data.edges)
     .join("text")
     .attr("class", "graph-edge-label")
-    .text(d => d.relationship);
+    .text(d => d.relationship || "");
 
-  // Nodes
-  const node = svg.append("g")
+  // ── Nodes ──
+  const node = world.append("g").attr("class", "graph-nodes")
     .selectAll("g")
     .data(data.nodes)
     .join("g")
@@ -421,22 +471,51 @@ function renderGraph(data) {
       .on("drag", dragging)
       .on("end", dragEnd));
 
+  // Outer glow ring
   node.append("circle")
-    .attr("r", d => 5 + (d.accessCount || 0) * 0.5)
+    .attr("class", "node-glow")
+    .attr("r", d => nodeRadius(d) + 4)
+    .attr("fill", "none")
+    .attr("stroke", d => tierColor[d.tier] || "#6b7280")
+    .attr("stroke-width", 2)
+    .attr("stroke-opacity", 0.15)
+    .attr("filter", "url(#glow)");
+
+  // Main circle
+  node.append("circle")
+    .attr("class", "node-circle")
+    .attr("r", d => nodeRadius(d))
     .attr("fill", d => tierColor[d.tier] || "#6b7280")
-    .attr("stroke", "rgba(255,255,255,0.1)")
-    .attr("stroke-width", 1);
+    .attr("stroke", "rgba(255,255,255,0.15)")
+    .attr("stroke-width", 1.5);
 
+  // Labels
   node.append("text")
-    .text(d => d.label ? d.label.substring(0, 25) : "")
-    .attr("dx", 12)
-    .attr("dy", 4);
+    .attr("class", "node-label")
+    .text(d => d.label ? d.label.substring(0, 30) : "")
+    .attr("dx", d => nodeRadius(d) + 5)
+    .attr("dy", 4)
+    .style("display", graphLabelsVisible ? "block" : "none");
 
+  // Click → detail panel
   node.on("click", (_event, d) => {
-    $("graph-stats").textContent =
-      `[${d.tier}] ${d.category || "—"} | ${d.label} | Access: ${d.accessCount || 0} | Score: ${(d.score || 0).toFixed(2)}`;
+    showGraphDetail(d);
+    // Highlight selected
+    node.selectAll(".node-circle").attr("stroke", "rgba(255,255,255,0.15)").attr("stroke-width", 1.5);
+    d3.select(_event.currentTarget).select(".node-circle").attr("stroke", "#fff").attr("stroke-width", 3);
   });
 
+  // Hover tooltip
+  node.on("mouseenter", function(_event, d) {
+    d3.select(this).select(".node-label").style("display", "block");
+  }).on("mouseleave", function() {
+    if (!graphLabelsVisible) d3.select(this).select(".node-label").style("display", "none");
+  });
+
+  // ── Legend ──
+  renderGraphLegend(tierColor);
+
+  // ── Tick ──
   graphSimulation.on("tick", () => {
     link
       .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
@@ -445,6 +524,11 @@ function renderGraph(data) {
       .attr("x", d => (d.source.x + d.target.x) / 2)
       .attr("y", d => (d.source.y + d.target.y) / 2);
     node.attr("transform", d => `translate(${d.x},${d.y})`);
+  });
+
+  // Auto-fit after simulation stabilizes
+  graphSimulation.on("end", () => {
+    fitGraphToView(data.nodes, width, height);
   });
 
   function dragStart(event, d) {
@@ -458,7 +542,76 @@ function renderGraph(data) {
   }
 }
 
+function nodeRadius(d) {
+  return Math.max(5, Math.min(14, 4 + Math.sqrt(d.accessCount || 1) * 2));
+}
+
+function fitGraphToView(nodes, width, height) {
+  if (!nodes || nodes.length === 0 || !graphZoom) return;
+  const svg = d3.select("#graph-svg");
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  nodes.forEach(d => {
+    if (d.x < minX) minX = d.x;
+    if (d.x > maxX) maxX = d.x;
+    if (d.y < minY) minY = d.y;
+    if (d.y > maxY) maxY = d.y;
+  });
+
+  const padding = 60;
+  const graphWidth = maxX - minX + padding * 2;
+  const graphHeight = maxY - minY + padding * 2;
+  const scale = Math.min(width / graphWidth, height / graphHeight, 2);
+  const tx = width / 2 - (minX + maxX) / 2 * scale;
+  const ty = height / 2 - (minY + maxY) / 2 * scale;
+
+  svg.transition().duration(500)
+    .call(graphZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+function renderGraphLegend(tierColor) {
+  const legendContainer = $("graph-legend");
+  if (!legendContainer) return;
+  legendContainer.innerHTML = Object.entries(tierColor).map(([tier, color]) =>
+    `<span class="legend-item"><span class="legend-dot" style="background:${color}"></span>${tier}</span>`
+  ).join("");
+}
+
+function showGraphDetail(d) {
+  const panel = $("graph-detail");
+  if (!panel) return;
+  panel.style.display = "block";
+  panel.innerHTML = `
+    <div class="detail-header">
+      <span class="badge badge-${d.tier || 'daily'}">${d.tier || "daily"}</span>
+      <span class="detail-category">${d.category || "uncategorized"}</span>
+      <button class="btn-sm btn-secondary" onclick="this.closest('.graph-detail-panel').style.display='none'">✕</button>
+    </div>
+    <p class="detail-content">${d.label || "—"}</p>
+    <div class="detail-stats">
+      <span>Access: <strong>${d.accessCount || 0}</strong></span>
+      <span>Score: <strong>${(d.score || 0).toFixed(2)}</strong></span>
+      <span class="detail-id">${d.id}</span>
+    </div>
+  `;
+}
+
+// Controls
 $("btn-refresh-graph").addEventListener("click", loadGraph);
+
+$("btn-fit-graph").addEventListener("click", () => {
+  if (!graphSimulation) return;
+  const container = $("graph-container");
+  const nodes = graphSimulation.nodes();
+  fitGraphToView(nodes, container.clientWidth, container.clientHeight);
+});
+
+$("btn-toggle-labels").addEventListener("click", () => {
+  graphLabelsVisible = !graphLabelsVisible;
+  d3.selectAll(".node-label").style("display", graphLabelsVisible ? "block" : "none");
+  $("btn-toggle-labels").textContent = graphLabelsVisible ? "🏷️ Labels On" : "🏷️ Labels Off";
+});
+
 
 // =============================================================================
 // SCRIPTS
