@@ -20,21 +20,34 @@
 
 ## Installation
 
-1. **Clone or copy the PostClaw repository** into your local workspace.
+### Option 1: Install via `openclaw plugins` CLI (recommended)
+
+```bash
+# From a local path (copies into ~/.openclaw/extensions/postclaw/)
+openclaw plugins install /path/to/PostClaw
+
+# Or link for development (no copy, live edits)
+openclaw plugins install -l /path/to/PostClaw
+
+# Or from npm (once published)
+openclaw plugins install @postclaw/postclaw
+```
+
+### Option 2: Manual path-based loading
+
+1. **Clone or copy** the PostClaw repository into your local workspace.
    ```bash
    git clone <repository-url> PostClaw
-   cd PostClaw/PostClaw
+   cd PostClaw
    ```
 
-2. **Install dependencies**
+2. **Install dependencies and build**
    ```bash
    npm install
-   ```
-
-3. **Build the plugin**
-   ```bash
    npm run build
    ```
+
+3. **Add the path** to `plugins.load.paths` in `~/.openclaw/openclaw.json` (see Configuration below).
 
 ---
 
@@ -42,43 +55,56 @@
 
 ### 1. Database Connection
 
-PostClaw needs a connection string to your PostgreSQL instance. This is the _only_ configuration required via environment variables.
+PostClaw needs a PostgreSQL connection string. Configure it in `openclaw.json`:
 
-1. Copy the `.env.example` file:
-   ```bash
-   cp .env.example .env
-   ```
-2. Open `.env` and set your `POSTCLAW_DB_URL`:
-   ```ini
-   # Replace with your PostgreSQL credentials
-   POSTCLAW_DB_URL="postgres://openclaw:YOUR_PASSWORD@localhost:5432/memorydb"
-   ```
+```json
+{
+  "plugins": {
+    "entries": {
+      "postclaw": {
+        "enabled": true,
+        "config": {
+          "dbUrl": "postgres://openclaw:YOUR_PASSWORD@localhost:5432/memorydb"
+        }
+      }
+    }
+  }
+}
+```
 
-### 2. Loading PostClaw in OpenClaw
+> **Note:** The `POSTCLAW_DB_URL` environment variable is also supported as a fallback.
 
-To plug PostClaw into your OpenClaw instance, you need to update OpenClaw's global configuration file (usually `~/.openclaw/openclaw.json`).
+### 2. Enable PostClaw as the Memory Plugin
 
-1. Tell OpenClaw to load the PostClaw path in the `plugins.load.paths` array.
-2. Tell OpenClaw to mount the `postclaw` plugin inside the `memory` slot.
-3. Enable the plugin under `plugins.entries`.
+Mount PostClaw in the `memory` slot and enable it:
 
-**Example `openclaw.json` snippets:**
+```json
+{
+  "plugins": {
+    "slots": {
+      "memory": "postclaw"
+    },
+    "entries": {
+      "postclaw": {
+        "enabled": true,
+        "config": {
+          "dbUrl": "postgres://openclaw:YOUR_PASSWORD@localhost:5432/memorydb"
+        }
+      }
+    }
+  }
+}
+```
+
+If you installed via the CLI, you're done. If loading manually, also add:
 
 ```json
 {
   "plugins": {
     "load": {
       "paths": [
-        "/absolute/path/to/PostClaw/PostClaw"
+        "/absolute/path/to/PostClaw"
       ]
-    },
-    "slots": {
-      "memory": "postclaw"
-    },
-    "entries": {
-      "postclaw": {
-        "enabled": true
-      }
     }
   }
 }
@@ -86,9 +112,8 @@ To plug PostClaw into your OpenClaw instance, you need to update OpenClaw's glob
 
 ### 3. OpenClaw Embedding Settings
 
-PostClaw natively uses OpenClaw's internal LLM configuration to generate embeddings for semantic search. Ensure your OpenClaw configuration has memory search features fully specified under `agents.defaults.memorySearch`. 
+PostClaw uses OpenClaw's internal LLM configuration for embeddings. Ensure `agents.defaults.memorySearch` is configured:
 
-Example settings inside `openclaw.json`:
 ```json
 {
   "agents": {
@@ -105,22 +130,21 @@ Example settings inside `openclaw.json`:
   }
 }
 ```
-*Note: Depending on your local embedding provider (LM Studio, Ollama, etc.), change `baseUrl` and `model` to match.*
+
+*Adjust `baseUrl` and `model` to match your local embedding provider (LM Studio, Ollama, etc.).*
 
 ---
 
 ## Testing
 
-PostClaw comes with built-in development scripts to smoke-test your PostgreSQL connection and semantic integration _before_ fully launching your OpenClaw workers.
+PostClaw includes smoke tests for verifying your PostgreSQL connection and semantic integration. Build first (`npm run build`), then:
 
-If you want to run these tests, you must compile the TypeScript code first (`npm run build`). The scripts are pre-configured to point to a localhost embedding provider as a fallback.
-
-1. **Database Search Smoke Test:** Tests embedding generation and a `pgvector` nearest-neighbor search.
+1. **Database Search Smoke Test:** Tests embedding generation and `pgvector` nearest-neighbor search.
    ```bash
    node dist/test-db.js
    ```
 
-2. **Semantic Memory Module Test:** Tests the memory insertion, categorization, volatility scoring, and retrieval logic.
+2. **Semantic Memory Module Test:** Tests memory insertion, categorization, volatility scoring, and retrieval.
    ```bash
    node dist/test-memory.js
    ```
@@ -133,4 +157,5 @@ If you encounter `pgvector` errors, verify your database was created with:
 ```sql
 CREATE EXTENSION vector;
 ```
-If you encounter module load errors, verify OpenClaw is referencing the absolute path to your `PostClaw` folder containing `package.json` and the built `dist/` artifacts.
+
+Run `openclaw plugins doctor` to check that PostClaw's manifest and configuration are valid.

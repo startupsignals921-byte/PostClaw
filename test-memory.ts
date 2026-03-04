@@ -1,4 +1,4 @@
-import { sql, POSTCLAW_DB_URL, setEmbeddingConfig } from "./services/db.js";
+import { getSql, POSTCLAW_DB_URL, setEmbeddingConfig } from "./services/db.js";
 import { storeMemory, updateMemory, searchPostgres } from "./services/memoryService.js";
 
 const TEST_AGENT_ID = "test-agent";
@@ -29,7 +29,7 @@ async function main() {
         }
 
         console.log("\n[TEST 2] Verifying columns in database...");
-        let rows = await sql.begin(async (tx: any) => {
+        let rows = await getSql().begin(async (tx: any) => {
             await tx`SELECT set_config('app.current_agent_id', ${TEST_AGENT_ID}, true)`;
             return tx`
               SELECT category, volatility, token_count, confidence, tier, usefulness_score, metadata, access_count, last_accessed_at, injection_count
@@ -51,7 +51,7 @@ async function main() {
         }
 
         console.log("\n[TEST 4] Verifying access_count and last_accessed_at were updated...");
-        rows = await sql.begin(async (tx: any) => {
+        rows = await getSql().begin(async (tx: any) => {
             await tx`SELECT set_config('app.current_agent_id', ${TEST_AGENT_ID}, true)`;
             return tx`
               SELECT access_count, injection_count, last_accessed_at
@@ -74,7 +74,7 @@ async function main() {
     } catch (err) {
         console.error("  ❌  Test FAILED:", err);
     } finally {
-        await sql.end();
+        await getSql().end();
     }
 }
 

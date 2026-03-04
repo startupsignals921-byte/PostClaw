@@ -1,10 +1,24 @@
 {
     "id": "postclaw",
     "name": "PostClaw",
+    "version": "1.0.0",
+    "kind": "memory",
     "description": "PostgreSQL-backed RAG, memory, and persona management",
     "configSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {}
+        "properties": {
+            "dbUrl": {
+                "type": "string",
+                "description": "PostgreSQL connection string (with pgvector extension enabled)"
+            }
+        }
+    },
+    "uiHints": {
+        "dbUrl": {
+            "label": "Database URL",
+            "placeholder": "postgres://user:pass@localhost:5432/memorydb",
+            "sensitive": true
+        }
     }
 }

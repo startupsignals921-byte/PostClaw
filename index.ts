@@ -2,7 +2,7 @@
 // RE-EXPORTS — Single entry point for downstream consumers
 // =============================================================================
 
-export { sql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, hashContent, setEmbeddingConfig } from "./services/db.js";
+export { getSql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, hashContent, setEmbeddingConfig, setDbUrl } from "./services/db.js";
 export { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./services/memoryService.js";
 export type { ChatCompletionTool } from "./services/memoryService.js";
 
@@ -57,7 +57,7 @@ function isDuplicate(key: string): boolean {
 // HELPERS
 // =============================================================================
 
-import { getEmbedding, setEmbeddingConfig } from "./services/db.js";
+import { getEmbedding, setEmbeddingConfig, setDbUrl } from "./services/db.js";
 import { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./services/memoryService.js";
 import { Type } from "@sinclair/typebox";
 
@@ -90,6 +90,13 @@ const openclawPostgresPlugin = {
 
   register(api: any) {
     console.log("[PostClaw] Registering plugin hooks...");
+
+    // Apply database URL from plugin config (plugins.entries.postclaw.config.dbUrl)
+    const pluginConfig = api.config?.plugins?.entries?.postclaw?.config;
+    if (pluginConfig?.dbUrl) {
+      setDbUrl(pluginConfig.dbUrl);
+      console.log("[PostClaw] Database URL configured via plugin config");
+    }
 
     // Extract LLM configuration from OpenClaw (defaulting to localhost if not found)
     const memoryConfig = api.config?.agents?.defaults?.memorySearch;
@@ -487,7 +494,7 @@ export default openclawPostgresPlugin;
 // STANDALONE ENTRY POINT (for testing)
 // =============================================================================
 
-import { sql, POSTCLAW_DB_URL, LM_STUDIO_URL, EMBEDDING_MODEL } from "./services/db.js";
+import { getSql, POSTCLAW_DB_URL, LM_STUDIO_URL, EMBEDDING_MODEL } from "./services/db.js";
 
 if (require.main === module) {
   console.log("=== PostClaw-swarm plugin loaded ===");
@@ -499,7 +506,7 @@ if (require.main === module) {
   // Graceful shutdown
   process.on("SIGINT", async () => {
     console.log("\nShutting down...");
-    await sql.end();
+    await getSql().end();
     process.exit(0);
   });
 }

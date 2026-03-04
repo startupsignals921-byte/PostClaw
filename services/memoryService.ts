@@ -1,4 +1,4 @@
-import { sql, EMBEDDING_MODEL, getEmbedding, hashContent } from "./db.js";
+import { getSql, EMBEDDING_MODEL, getEmbedding, hashContent } from "./db.js";
 import { z } from "zod";
 import { StoreMemoryInputSchema, UpdateMemoryInputSchema } from "../schemas/validation.js";
 
@@ -15,7 +15,7 @@ const registeredAgents = new Set<string>();
 export async function ensureAgent(agentId: string): Promise<void> {
   if (!agentId || registeredAgents.has(agentId)) return;
   try {
-    await sql`INSERT INTO agents (id, name) VALUES (${agentId}, ${agentId}) ON CONFLICT DO NOTHING`;
+    await getSql()`INSERT INTO agents (id, name) VALUES (${agentId}, ${agentId}) ON CONFLICT DO NOTHING`;
     registeredAgents.add(agentId);
     console.log(`[AGENTS] Registered agent: ${agentId}`);
   } catch (err) {
@@ -37,7 +37,7 @@ export async function searchPostgres(agentId: string, userText: string): Promise
   try {
     const embedding = await getEmbedding(userText);
 
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       const results = await tx`
@@ -84,7 +84,7 @@ export async function searchPostgres(agentId: string, userText: string): Promise
           UPDATE memory_semantic
           SET access_count = access_count + 1,
               last_accessed_at = CURRENT_TIMESTAMP
-          WHERE id IN ${sql(extractedIds)}
+          WHERE id IN ${getSql()(extractedIds)}
         `;
       }
     });
@@ -115,7 +115,7 @@ export async function logEpisodicMemory(agentId: string,
     }
     const modelName = EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
 
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
@@ -151,7 +151,7 @@ export async function logEpisodicToolCall(agentId: string,
     }
     const modelName = EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
 
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
@@ -181,7 +181,7 @@ export async function fetchPersonaContext(agentId: string, embedding: number[] |
   let personaContext: string | null = null;
 
   try {
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       let results;
@@ -250,7 +250,7 @@ export async function fetchDynamicTools(agentId: string, embedding: number[]): P
   let dynamicTools: ChatCompletionTool[] = [];
 
   try {
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       const results = await tx`
@@ -302,7 +302,7 @@ export async function storeMemory(agentId: string,
     const embedding = await getEmbedding(validated.content);
     const contentHash = hashContent(validated.content);
 
-    const result = await sql.begin(async (tx: any) => {
+    const result = await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       const rows = await tx`
@@ -358,7 +358,7 @@ export async function updateMemory(agentId: string,
     const embedding = await getEmbedding(validated.newFact);
     const contentHash = hashContent(validated.newFact);
 
-    const result = await sql.begin(async (tx: any) => {
+    const result = await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       // Insert the new truth
@@ -412,7 +412,7 @@ export async function linkMemories(agentId: string,
   relationship: string
 ): Promise<{ status: string }> {
   try {
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
@@ -448,7 +448,7 @@ export async function storeTool(agentId: string,
     const embedText = `${toolName}: ${description}`;
     const embedding = await getEmbedding(embedText);
 
-    await sql.begin(async (tx: any) => {
+    await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`

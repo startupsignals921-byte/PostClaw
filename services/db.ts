@@ -7,11 +7,15 @@ import "dotenv/config";
 // =============================================================================
 
 export let LM_STUDIO_URL = process.env.LM_STUDIO_URL;
-export const POSTCLAW_DB_URL = process.env.POSTCLAW_DB_URL;
+export let POSTCLAW_DB_URL = process.env.POSTCLAW_DB_URL;
 export let EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
 
-if (!POSTCLAW_DB_URL) {
-  throw new Error("Missing required 'POSTCLAW_DB_URL' environment variable. Please check your .env file.");
+/**
+ * Set the database connection URL. Called by the plugin register() if the user
+ * supplies `dbUrl` in the plugin config. Falls back to env var POSTCLAW_DB_URL.
+ */
+export function setDbUrl(url: string) {
+  POSTCLAW_DB_URL = url;
 }
 
 /**
@@ -24,10 +28,28 @@ export function setEmbeddingConfig(url: string, model: string) {
 }
 
 // =============================================================================
-// DATABASE CLIENT
+// DATABASE CLIENT — Lazily initialized
 // =============================================================================
 
-export const sql = postgres(POSTCLAW_DB_URL);
+let _sql: ReturnType<typeof postgres> | null = null;
+
+/**
+ * Returns the shared postgres client, creating it on first use. This allows the
+ * plugin config (`dbUrl`) to be applied before the connection is opened.
+ */
+export function getSql(): ReturnType<typeof postgres> {
+  if (_sql) return _sql;
+
+  if (!POSTCLAW_DB_URL) {
+    throw new Error(
+      "Missing database URL. Set 'dbUrl' in plugins.entries.postclaw.config or the POSTCLAW_DB_URL environment variable."
+    );
+  }
+
+  _sql = postgres(POSTCLAW_DB_URL);
+  console.log(`[PostClaw] Database connection established`);
+  return _sql;
+}
 
 // =============================================================================
 // UTILITIES

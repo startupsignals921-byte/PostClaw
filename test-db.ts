@@ -5,7 +5,7 @@
  * Usage:  npm run build && node dist/test-db.js
  */
 
-import { sql, POSTCLAW_DB_URL, setEmbeddingConfig } from "./services/db.js";
+import { getSql, POSTCLAW_DB_URL, setEmbeddingConfig } from "./services/db.js";
 import { searchPostgres } from "./services/memoryService.js";
 
 async function main() {
@@ -21,7 +21,7 @@ async function main() {
   // ------------------------------------------------------------------
   console.log("[TEST 1] SELECT 1 health check...");
   try {
-    const rows = await sql`SELECT 1 AS ok`;
+    const rows = await getSql()`SELECT 1 AS ok`;
     if (rows[0]?.ok === 1) {
       console.log("  ✅  Connection OK\n");
     } else {
@@ -29,7 +29,7 @@ async function main() {
     }
   } catch (err) {
     console.error("  ❌  Connection FAILED:", err);
-    await sql.end();
+    await getSql().end();
     process.exit(1);
   }
 
@@ -38,7 +38,7 @@ async function main() {
   // ------------------------------------------------------------------
   console.log("[TEST 2] Checking required tables exist...");
   try {
-    const tables = await sql`
+    const tables = await getSql()`
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -52,13 +52,13 @@ async function main() {
     const missing = required.filter((t) => !found.includes(t));
     if (missing.length > 0) {
       console.error(`  ❌  Missing required tables: ${missing.join(", ")}`);
-      await sql.end();
+      await getSql().end();
       process.exit(1);
     }
     console.log("  ✅  All required tables present\n");
   } catch (err) {
     console.error("  ❌  Table check FAILED:", err);
-    await sql.end();
+    await getSql().end();
     process.exit(1);
   }
 
@@ -79,7 +79,7 @@ async function main() {
     console.log();
   } catch (err) {
     console.error("  ❌  Search FAILED:", err);
-    await sql.end();
+    await getSql().end();
     process.exit(1);
   }
 
@@ -87,7 +87,7 @@ async function main() {
   // Done
   // ------------------------------------------------------------------
   console.log("=== All tests passed ===");
-  await sql.end();
+  await getSql().end();
   process.exit(0);
 }
 

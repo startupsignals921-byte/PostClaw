@@ -1,21 +1,32 @@
 {
-  "name": "postclaw",
+  "name": "@postclaw/postclaw",
   "version": "1.0.0",
   "description": "OpenClaw native plugin for PostgreSQL-backed RAG, memory, and persona management",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "schemas/db.sql",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "check": "tsc --noEmit",
     "start": "node dist/index.js",
-    "test:db": "node dist/test-db.js"
+    "test:db": "node dist/test-db.js",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "openclaw",
     "plugin",
     "postgres",
-    "rag"
+    "rag",
+    "memory",
+    "pgvector"
   ],
   "author": "",
   "license": "ISC",
@@ -29,10 +40,10 @@
     "@sinclair/typebox": "^0.34.48",
     "dotenv": "^17.3.1",
     "postgres": "^3.4.8",
-    "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^25.3.3"
+    "@types/node": "^25.3.3",
+    "typescript": "^5.9.3"
   }
 }
