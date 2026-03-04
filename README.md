@@ -48,36 +48,6 @@
 
 ---
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         OpenClaw Gateway                            │
-│                                                                     │
-│  ┌────────────────┐   ┌───────────────────┐   ┌──────────────────┐ │
-│  │ message_received│──▶│before_prompt_build│──▶│    agent_end     │ │
-│  │  (cache text)   │   │ (RAG + persona)   │   │(episodic logging)│ │
-│  └────────────────┘   └───────────────────┘   └──────────────────┘ │
-│                              │                         │            │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    Agent Tools                               │   │
-│  │  memory_search │ memory_store │ memory_update │ memory_link  │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────────┐
-│                    PostgreSQL + pgvector                             │
-│                                                                     │
-│  agents ← agent_persona          memory_semantic ←→ entity_edges   │
-│           context_environment    memory_episodic                    │
-│                                  conversation_checkpoints          │
-│                                                                     │
-│  Row-Level Security │ HNSW Vector Indices │ Full-Text Search       │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## Prerequisites
 
 1. **OpenClaw** — installed and configured
