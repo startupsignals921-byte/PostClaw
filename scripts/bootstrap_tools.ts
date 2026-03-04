@@ -1,7 +1,9 @@
-import postgres from "npm:postgres";
-import { DB_URL, LM_STUDIO_URL, AGENT_ID } from "../PostClaw/db.ts";
+import postgres from "postgres";
+import { readFile } from "fs/promises";
+import { POSTCLAW_DB_URL, LM_STUDIO_URL } from "../services/db.js";
 
-const sql = postgres(DB_URL!);
+const sql = postgres(POSTCLAW_DB_URL!);
+const AGENT_ID = process.env.AGENT_ID || "default_agent";
 
 // The tools we ALWAYS want in the payload (handled by the pruner)
 const CORE_TOOLS = ["read", "write", "edit", "exec", "process", "session_status"];
@@ -12,13 +14,13 @@ async function getEmbedding(text: string): Promise<number[]> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input: text, model: "text-embedding-nomic-embed-text-v2-moe" }),
   });
-  const data = await res.json();
+  const data: any = await res.json();
   return data.data[0].embedding;
 }
 
 async function bootstrapTools(promptFilePath: string) {
   try {
-    const rawData = await Deno.readTextFile(promptFilePath);
+    const rawData = await readFile(promptFilePath, "utf-8");
     const promptJson = JSON.parse(rawData);
 
     if (!promptJson.tools || !Array.isArray(promptJson.tools)) {
@@ -59,6 +61,6 @@ async function bootstrapTools(promptFilePath: string) {
   }
 }
 
-const targetFile = Deno.args[0];
+const targetFile = process.argv[2];
 if (targetFile) bootstrapTools(targetFile);
-else console.log("Usage: deno run --allow-net --allow-read --allow-env scripts/bootstrap_tools.ts <path_to_debug_prompt.json>");
+else console.log("Usage: node scripts/bootstrap_tools.js <path_to_debug_prompt.json>");

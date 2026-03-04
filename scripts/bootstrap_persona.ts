@@ -1,7 +1,9 @@
-import postgres from "npm:postgres";
-import { DB_URL, LM_STUDIO_URL, AGENT_ID } from "../PostClaw/db.ts";
+import postgres from "postgres";
+import { readFile } from "fs/promises";
+import { POSTCLAW_DB_URL, LM_STUDIO_URL } from "../services/db.js";
 
-const sql = postgres(DB_URL!);
+const sql = postgres(POSTCLAW_DB_URL!);
+const AGENT_ID = process.env.AGENT_ID || "default_agent";
 
 interface PersonaChunk {
   category: string;
@@ -15,7 +17,7 @@ async function getEmbedding(text: string): Promise<number[]> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input: text, model: "text-embedding-nomic-embed-text-v2-moe" }),
   });
-  const data = await res.json();
+  const data: any = await res.json();
   return data.data[0].embedding;
 }
 
@@ -46,7 +48,7 @@ Each object must have:
     }),
   });
 
-  const data = await res.json();
+  const data: any = await res.json();
   let jsonString = data.choices[0].message.content.trim();
 
   // NEW: Strip out the <think>...</think> chain-of-thought blocks
@@ -71,7 +73,7 @@ Each object must have:
 
 async function processAndStoreFile(filePath: string) {
   try {
-    const markdownText = await Deno.readTextFile(filePath);
+    const markdownText = await readFile(filePath, "utf-8");
     const filename = filePath.split('/').pop() || "unknown.md";
 
     // 1. Get the intelligent chunks from the LLM
@@ -120,10 +122,10 @@ async function processAndStoreFile(filePath: string) {
   }
 }
 
-const targetFile = Deno.args[0];
+const targetFile = process.argv[2];
 if (targetFile) {
   processAndStoreFile(targetFile);
 } else {
-  console.log("Usage: deno run --allow-net --allow-read --allow-env scripts/bootstrap_persona.ts <path_to_markdown_file>");
-  Deno.exit(1);
+  console.log("Usage: node scripts/bootstrap_persona.js <path_to_markdown_file>");
+  process.exit(1);
 }

@@ -1,5 +1,0 @@
-node_modules/
-dist/
-debug_logs/
-.env
-*.log

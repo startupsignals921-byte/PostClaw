@@ -2,15 +2,13 @@
 // RE-EXPORTS — Single entry point for downstream consumers
 // =============================================================================
 
-export { sql, LM_STUDIO_URL, DB_URL, AGENT_ID, EMBEDDING_MODEL, getEmbedding, hashContent } from "./db.js";
-export { searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./memoryService.js";
-export type { ChatCompletionTool } from "./memoryService.js";
+export { sql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, hashContent, setEmbeddingConfig } from "./services/db.js";
+export { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./services/memoryService.js";
+export type { ChatCompletionTool } from "./services/memoryService.js";
 
 // =============================================================================
 // TYPES
 // =============================================================================
-
-import type { ChatCompletionTool } from "./memoryService.js";
 
 /** A single message in the OpenAI chat format. */
 export interface ChatMessage {
@@ -59,26 +57,9 @@ function isDuplicate(key: string): boolean {
 // HELPERS
 // =============================================================================
 
-import { getEmbedding } from "./db.js";
-import { searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./memoryService.js";
+import { getEmbedding, setEmbeddingConfig } from "./services/db.js";
+import { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./services/memoryService.js";
 import { Type } from "@sinclair/typebox";
-import * as fs from "node:fs";
-import * as path from "node:path";
-
-// const DEBUG_LOG_DIR = path.join(__dirname, "..", "debug_logs");
-
-// function debugLog(hookName: string, suffix: string, data: any): void {
-//   try {
-//     if (!fs.existsSync(DEBUG_LOG_DIR)) fs.mkdirSync(DEBUG_LOG_DIR, { recursive: true });
-//     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-//     const filename = `${hookName}_${ts}_${suffix}.json`;
-//     const content = JSON.stringify(data, null, 2);
-//     fs.writeFileSync(path.join(DEBUG_LOG_DIR, filename), content);
-//     console.log(`[PostClaw] 📄 Debug log: ${filename} (${content.length} bytes)`);
-//   } catch (err) {
-//     console.error(`[PostClaw] Failed to write debug log:`, err);
-//   }
-// }
 
 /**
  * Extracts the text content from the last user message in a messages array.
@@ -110,6 +91,12 @@ const openclawPostgresPlugin = {
   register(api: any) {
     console.log("[PostClaw] Registering plugin hooks...");
 
+    // Extract LLM configuration from OpenClaw (defaulting to localhost if not found)
+    const memoryConfig = api.config?.agents?.defaults?.memorySearch;
+    const llmUrl = memoryConfig?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
+    const llmModel = memoryConfig?.remote?.model || memoryConfig?.model || "text-embedding-nomic-embed-text-v2-moe";
+    setEmbeddingConfig(llmUrl, llmModel);
+
     // -------------------------------------------------------------------------
     // before_prompt_build — Prune + replace system prompt, inject RAG context
     //
@@ -137,8 +124,12 @@ const openclawPostgresPlugin = {
           const cleanText = userText.replace(/^\[.*?\]\s*/, "");
 
           // Detect heartbeat via ctx metadata (preferred) with keyword fallback
+          const agentId = ctx.agentId;
           const provider = ctx?.messageProvider ?? "";
           const isHeartbeat = provider === "heartbeat" || provider === "cron";
+
+          // Lazy-register the agent if not already in the DB
+          await ensureAgent(agentId);
 
           console.log(`[PostClaw] before_prompt_build: "${cleanText.substring(0, 80)}..." (heartbeat=${isHeartbeat}, provider=${provider})`);
 
@@ -167,7 +158,6 @@ const openclawPostgresPlugin = {
           // ==================================================================
           // STEP 2: Inject custom memory architecture rules
           // ==================================================================
-          const agentId = AGENT_ID;
 
           sysPrompt += `
             ## Memory & Knowledge Management
@@ -202,9 +192,9 @@ const openclawPostgresPlugin = {
 
             const [memoryContext, personaContext] = await Promise.all([
               // RAG: only when we have user text to search against
-              hasUserText ? searchPostgres(cleanText) : Promise.resolve(null),
+              hasUserText ? searchPostgres(agentId, cleanText) : Promise.resolve(null),
               // Persona: always fetch (core rules work without embedding)
-              fetchPersonaContext(embedding),
+              fetchPersonaContext(agentId, embedding),
             ]);
 
             // Persona context → append to the pruned system prompt
@@ -228,16 +218,6 @@ const openclawPostgresPlugin = {
           // Return the fully replaced system prompt
           result.systemPrompt = sysPrompt;
           console.log(`[PostClaw] ✅ System prompt replaced (${sysPrompt.length} chars)`);
-
-          // --- DEBUG: dump outgoing result ---
-          // debugLog("before_prompt_build", "OUT", {
-          //   systemPromptLength: result.systemPrompt?.length ?? 0,
-          //   systemPromptPreview: result.systemPrompt?.substring(0, 500) ?? null,
-          //   prependContextLength: result.prependContext?.length ?? 0,
-          //   prependContextPreview: result.prependContext?.substring(0, 500) ?? null,
-          //   fullSystemPrompt: result.systemPrompt,
-          //   fullPrependContext: result.prependContext,
-          // });
 
           return result;
         } catch (err) {
@@ -266,8 +246,10 @@ const openclawPostgresPlugin = {
         parameters: Type.Object({
           query: Type.String({ description: "Natural language search query" }),
         }),
-        async execute(_id: string, args: { query: string }) {
-          const result = await searchPostgres(args.query);
+        async execute(_toolCallId: string, args: { query: string }, _signal: any, _onUpdate: any, ctx: any) {
+          const agentId = ctx?.agentId || "main";
+          await ensureAgent(agentId);
+          const result = await searchPostgres(agentId, args.query);
           return result || "No memories found matching that query.";
         },
       },
@@ -287,10 +269,11 @@ const openclawPostgresPlugin = {
           tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily" })),
           metadata: Type.Optional(Type.Any({ description: "A JSON object of additional contextual key-value pairs" }))
         }),
-        async execute(_id: string, args: any) {
-          // Pass the destructured args into the options object
+        async execute(_toolCallId: string, args: any, _signal: any, _onUpdate: any, ctx: any) {
+          const agentId = ctx?.agentId || "main";
+          await ensureAgent(agentId);
           const { content, scope, ...options } = args;
-          const result = await storeMemory(content, scope, options);
+          const result = await storeMemory(agentId, content, scope, options);
           return JSON.stringify(result);
         },
       },
@@ -310,9 +293,11 @@ const openclawPostgresPlugin = {
           tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily" })),
           metadata: Type.Optional(Type.Any({ description: "A JSON object of additional contextual key-value pairs" }))
         }),
-        async execute(_id: string, args: any) {
+        async execute(_toolCallId: string, args: any, _signal: any, _onUpdate: any, ctx: any) {
+          const agentId = ctx?.agentId || "main";
+          await ensureAgent(agentId);
           const { old_memory_id, new_fact, ...options } = args;
-          const result = await updateMemory(old_memory_id, new_fact, options);
+          const result = await updateMemory(agentId, old_memory_id, new_fact, options);
           return JSON.stringify(result);
         },
       },
@@ -329,8 +314,10 @@ const openclawPostgresPlugin = {
           target_id: Type.String({ description: "UUID of the target memory" }),
           relationship: Type.String({ description: "Relationship type (e.g. related_to, elaborates, contradicts, depends_on, part_of)" }),
         }),
-        async execute(_id: string, args: { source_id: string; target_id: string; relationship: string }) {
-          const result = await linkMemories(args.source_id, args.target_id, args.relationship);
+        async execute(_toolCallId: string, args: { source_id: string; target_id: string; relationship: string }, _signal: any, _onUpdate: any, ctx: any) {
+          const agentId = ctx?.agentId || "main";
+          await ensureAgent(agentId);
+          const result = await linkMemories(agentId, args.source_id, args.target_id, args.relationship);
           return JSON.stringify(result);
         },
       },
@@ -347,8 +334,10 @@ const openclawPostgresPlugin = {
           tool_json: Type.String({ description: "Full JSON schema definition of the tool" }),
           scope: Type.Optional(Type.Union([Type.Literal("private"), Type.Literal("shared"), Type.Literal("global")], { description: "Visibility scope. Default: private", default: "private" })),
         }),
-        async execute(_id: string, args: { tool_name: string; tool_json: string; scope?: "private" | "shared" | "global" }) {
-          const result = await storeTool(args.tool_name, args.tool_json, args.scope);
+        async execute(_toolCallId: string, args: { tool_name: string; tool_json: string; scope?: "private" | "shared" | "global" }, _signal: any, _onUpdate: any, ctx: any) {
+          const agentId = ctx?.agentId || "main";
+          await ensureAgent(agentId);
+          const result = await storeTool(agentId, args.tool_name, args.tool_json, args.scope);
           return JSON.stringify(result);
         },
       },
@@ -367,8 +356,13 @@ const openclawPostgresPlugin = {
       async (event: any, ctx: any) => {
         try {
           const messages: ChatMessage[] = event.messages ?? [];
+          const agentId = ctx.agentId;
           const provider = ctx?.messageProvider ?? "";
           const isHeartbeat = provider === "heartbeat" || provider === "cron";
+
+          // Lazy-register the agent if not already in the DB
+          await ensureAgent(agentId);
+
           console.log(`[PostClaw] agent_end: ${messages.length} messages, success=${event.success}, provider=${provider}`);
 
           // Skip all episodic logging for heartbeat/cron runs
@@ -401,7 +395,7 @@ const openclawPostgresPlugin = {
                 (async () => {
                   try {
                     const embedding = await getEmbedding(text);
-                    await logEpisodicMemory(text, embedding, "user_prompt");
+                    await logEpisodicMemory(agentId, text, embedding, "user_prompt");
                   } catch (err) {
                     console.error("[PostClaw] Failed to log episodic memory:", err);
                   }
@@ -426,6 +420,7 @@ const openclawPostgresPlugin = {
                   const summary = `Agent executed tool: ${toolCall.function.name} with arguments: ${toolCall.function.arguments}`;
                   const embedding = await getEmbedding(summary);
                   await logEpisodicToolCall(
+                    agentId,
                     toolCallId,
                     toolCall.function.name,
                     toolCall.function.arguments,
@@ -463,34 +458,22 @@ const openclawPostgresPlugin = {
       "message_received",
       async (event: any, _ctx: any) => {
         try {
-          // --- DEBUG: dump incoming event ---
-          // debugLog("message_received", "IN", {
-          //   eventKeys: Object.keys(event),
-          //   content: event.content,
-          //   from: event.from,
-          //   channelId: event.channelId,
-          //   _ctx,
-          // });
-
           const content = event.content;
           if (!content || typeof content !== "string" || !content.trim()) return;
 
           const cleanText = content.replace(/^\[.*?\]\s*/, "");
-          if (isDuplicate(cleanText)) return;
 
-          // Cache for before_prompt_build (which fires after this hook)
+          // Cache for before_prompt_build (which fires after this hook).
+          // Episodic logging is handled in agent_end where agentId is available.
           lastReceivedMessage = cleanText;
-
-          const embedding = await getEmbedding(cleanText);
-          await logEpisodicMemory(cleanText, embedding, "inbound_message");
-          console.log("[PostClaw] Logged inbound message to episodic memory");
+          console.log(`[PostClaw] message_received: cached "${cleanText.substring(0, 60)}..." for before_prompt_build`);
         } catch (err) {
           console.error("[PostClaw] message_received error:", err);
         }
       },
       {
         name: "PostClaw.message-received",
-        description: "Logs inbound messages to episodic memory",
+        description: "Caches inbound messages for before_prompt_build RAG injection",
       },
     );
 
@@ -504,13 +487,12 @@ export default openclawPostgresPlugin;
 // STANDALONE ENTRY POINT (for testing)
 // =============================================================================
 
-import { sql, DB_URL, LM_STUDIO_URL, AGENT_ID, EMBEDDING_MODEL } from "./db.js";
+import { sql, POSTCLAW_DB_URL, LM_STUDIO_URL, EMBEDDING_MODEL } from "./services/db.js";
 
 if (require.main === module) {
   console.log("=== PostClaw-swarm plugin loaded ===");
-  console.log(`  DB:     ${DB_URL}`);
+  console.log(`  DB:     ${POSTCLAW_DB_URL}`);
   console.log(`  LM:     ${LM_STUDIO_URL}`);
-  console.log(`  Agent:  ${AGENT_ID}`);
   console.log(`  Model:  ${EMBEDDING_MODEL}`);
   console.log("Hooks: before_prompt_build, agent_end, message_received");
 

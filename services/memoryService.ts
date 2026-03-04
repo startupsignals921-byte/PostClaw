@@ -1,6 +1,27 @@
-import { sql, AGENT_ID, EMBEDDING_MODEL, getEmbedding, hashContent } from "./db.js";
+import { sql, EMBEDDING_MODEL, getEmbedding, hashContent } from "./db.js";
 import { z } from "zod";
-import { StoreMemoryInputSchema, UpdateMemoryInputSchema } from "./schemas/validation.js";
+import { StoreMemoryInputSchema, UpdateMemoryInputSchema } from "../schemas/validation.js";
+
+// =============================================================================
+// LAZY AGENT AUTO-REGISTRATION
+// =============================================================================
+
+const registeredAgents = new Set<string>();
+
+/**
+ * Ensure the given agentId exists in the agents table.
+ * Uses an in-memory cache so we only hit the DB once per agent per process lifetime.
+ */
+export async function ensureAgent(agentId: string): Promise<void> {
+  if (!agentId || registeredAgents.has(agentId)) return;
+  try {
+    await sql`INSERT INTO agents (id, name) VALUES (${agentId}, ${agentId}) ON CONFLICT DO NOTHING`;
+    registeredAgents.add(agentId);
+    console.log(`[AGENTS] Registered agent: ${agentId}`);
+  } catch (err) {
+    console.error(`[AGENTS] Failed to register agent ${agentId}:`, err);
+  }
+}
 
 // =============================================================================
 // SEMANTIC SEARCH + GRAPH TRAVERSAL
@@ -10,20 +31,20 @@ import { StoreMemoryInputSchema, UpdateMemoryInputSchema } from "./schemas/valid
  * Semantic search + graph traversal against memory_semantic + entity_edges.
  * Returns formatted context string or null if no results found.
  */
-export async function searchPostgres(userText: string): Promise<string | null> {
+export async function searchPostgres(agentId: string, userText: string): Promise<string | null> {
   let contextString: string | null = null;
 
   try {
     const embedding = await getEmbedding(userText);
 
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       const results = await tx`
         WITH semantic_matches AS (
           SELECT id, content, 1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
           FROM memory_semantic
-          WHERE agent_id = ${AGENT_ID} AND is_archived = false
+          WHERE agent_id = ${agentId} AND is_archived = false
           ORDER BY similarity DESC
           LIMIT 7
         ),
@@ -32,7 +53,7 @@ export async function searchPostgres(userText: string): Promise<string | null> {
           FROM entity_edges e
           JOIN memory_semantic m ON (e.target_memory_id = m.id OR e.source_memory_id = m.id)
           JOIN semantic_matches sm ON (e.source_memory_id = sm.id OR e.target_memory_id = sm.id)
-          WHERE e.agent_id = ${AGENT_ID} AND m.id != sm.id AND m.is_archived = false
+          WHERE e.agent_id = ${agentId} AND m.id != sm.id AND m.is_archived = false
         ),
         final_matches AS (
           SELECT id, content, similarity, NULL as relationship_type FROM semantic_matches
@@ -43,6 +64,8 @@ export async function searchPostgres(userText: string): Promise<string | null> {
         )
         SELECT * FROM final_matches;
       `;
+
+      console.log(`[SEARCH] Query returned ${results.length} row(s) for agent=${agentId}`);
 
       if (results.length > 0) {
         contextString = results
@@ -79,21 +102,28 @@ export async function searchPostgres(userText: string): Promise<string | null> {
 /**
  * Log an episodic memory event to memory_episodic.
  */
-export async function logEpisodicMemory(
+export async function logEpisodicMemory(agentId: string,
   text: string,
   embedding: number[],
   eventType: string = "user_prompt"
 ): Promise<void> {
   try {
+    // Guard against undefined values that crash the postgres driver
+    if (!agentId) {
+      console.error(`[EPISODIC] Skipping: agentId is ${agentId}`);
+      return;
+    }
+    const modelName = EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
+
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
         INSERT INTO memory_episodic (
           agent_id, session_id, event_summary, event_type, embedding, embedding_model
         ) VALUES (
-          ${AGENT_ID}, 'active-session', ${text}, ${eventType},
-          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL}
+          ${agentId}, 'active-session', ${text}, ${eventType},
+          ${JSON.stringify(embedding)}, ${modelName}
         )
       `;
     });
@@ -106,7 +136,7 @@ export async function logEpisodicMemory(
 /**
  * Log a single tool call execution to memory_episodic.
  */
-export async function logEpisodicToolCall(
+export async function logEpisodicToolCall(agentId: string,
   toolCallId: string,
   toolName: string,
   toolArgs: string,
@@ -115,15 +145,21 @@ export async function logEpisodicToolCall(
   const summary = `Agent executed tool: ${toolName} with arguments: ${toolArgs}`;
 
   try {
+    if (!agentId) {
+      console.error(`[EPISODIC] Skipping tool call log: agentId is ${agentId}`);
+      return;
+    }
+    const modelName = EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
+
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
         INSERT INTO memory_episodic (
           agent_id, session_id, event_summary, event_type, embedding, embedding_model, metadata
         ) VALUES (
-          ${AGENT_ID}, 'active-session', ${summary}, 'tool_execution',
-          ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
+          ${agentId}, 'active-session', ${summary}, 'tool_execution',
+          ${JSON.stringify(embedding)}, ${modelName},
           ${JSON.stringify({ tool_call_id: toolCallId, tool_name: toolName })}
         )
       `;
@@ -141,12 +177,12 @@ export async function logEpisodicToolCall(
 /**
  * Fetch persona rules (core + situational) from agent_persona.
  */
-export async function fetchPersonaContext(embedding: number[] | null): Promise<string | null> {
+export async function fetchPersonaContext(agentId: string, embedding: number[] | null): Promise<string | null> {
   let personaContext: string | null = null;
 
   try {
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       let results;
 
@@ -210,12 +246,12 @@ export interface ChatCompletionTool {
 /**
  * Fetch dynamic tools from context_environment based on embedding similarity.
  */
-export async function fetchDynamicTools(embedding: number[]): Promise<ChatCompletionTool[]> {
+export async function fetchDynamicTools(agentId: string, embedding: number[]): Promise<ChatCompletionTool[]> {
   let dynamicTools: ChatCompletionTool[] = [];
 
   try {
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       const results = await tx`
         SELECT tool_name, context_data, 1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
@@ -255,7 +291,7 @@ export interface MemoryOptions {
 /**
  * Store a new semantic memory fact. Deduplicates via content_hash.
  */
-export async function storeMemory(
+export async function storeMemory(agentId: string,
   content: string,
   scope: "private" | "shared" | "global" = "private",
   options: MemoryOptions = {}
@@ -267,14 +303,14 @@ export async function storeMemory(
     const contentHash = hashContent(validated.content);
 
     const result = await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       const rows = await tx`
         INSERT INTO memory_semantic (
           agent_id, access_scope, content, content_hash, embedding, embedding_model,
           category, source_uri, volatility, is_pointer, token_count, confidence, tier, usefulness_score, expires_at, metadata
         ) VALUES (
-          ${AGENT_ID}, ${scope}, ${content}, ${contentHash},
+          ${agentId}, ${scope}, ${content}, ${contentHash},
           ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
           ${validated.options?.category || null}, ${validated.options?.source_uri || null}, ${validated.options?.volatility || 'low'}, ${validated.options?.is_pointer || false},
           ${validated.options?.token_count || 0}, ${validated.options?.confidence || 0.5}, ${validated.options?.tier || 'daily'}, ${validated.options?.usefulness_score || 0.0},
@@ -311,7 +347,7 @@ export async function storeMemory(
  * Supersede an old memory with a corrected/updated fact.
  * Archives the old memory and creates a new one with a causal link.
  */
-export async function updateMemory(
+export async function updateMemory(agentId: string,
   oldMemoryId: string,
   newFact: string,
   options: MemoryOptions = {}
@@ -323,7 +359,7 @@ export async function updateMemory(
     const contentHash = hashContent(validated.newFact);
 
     const result = await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       // Insert the new truth
       const newMem = await tx`
@@ -331,7 +367,7 @@ export async function updateMemory(
           agent_id, access_scope, content, content_hash, embedding, embedding_model,
           category, source_uri, volatility, is_pointer, token_count, confidence, tier, usefulness_score, expires_at, metadata
         ) VALUES (
-          ${AGENT_ID}, 'global', ${validated.newFact}, ${contentHash},
+          ${agentId}, 'global', ${validated.newFact}, ${contentHash},
           ${JSON.stringify(embedding)}, ${EMBEDDING_MODEL},
           ${validated.options?.category || null}, ${validated.options?.source_uri || null}, ${validated.options?.volatility || 'low'}, ${validated.options?.is_pointer || false},
           ${validated.options?.token_count || 0}, ${validated.options?.confidence || 0.5}, ${validated.options?.tier || 'daily'}, ${validated.options?.usefulness_score || 0.0},
@@ -345,7 +381,7 @@ export async function updateMemory(
       await tx`
         UPDATE memory_semantic
         SET is_archived = true, superseded_by = ${newId}
-        WHERE id = ${validated.oldMemoryId} AND agent_id = ${AGENT_ID};
+        WHERE id = ${validated.oldMemoryId} AND agent_id = ${agentId};
       `;
 
       return newId;
@@ -370,18 +406,18 @@ export async function updateMemory(
 /**
  * Create a directed edge between two memories in the knowledge graph.
  */
-export async function linkMemories(
+export async function linkMemories(agentId: string,
   sourceId: string,
   targetId: string,
   relationship: string
 ): Promise<{ status: string }> {
   try {
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
         INSERT INTO entity_edges (agent_id, source_memory_id, target_memory_id, relationship_type, weight)
-        VALUES (${AGENT_ID}, ${sourceId}, ${targetId}, ${relationship}, 1.0)
+        VALUES (${agentId}, ${sourceId}, ${targetId}, ${relationship}, 1.0)
         ON CONFLICT (source_memory_id, target_memory_id, relationship_type) DO NOTHING;
       `;
     });
@@ -401,7 +437,7 @@ export async function linkMemories(
 /**
  * Store or update a tool definition in context_environment.
  */
-export async function storeTool(
+export async function storeTool(agentId: string,
   toolName: string,
   toolJson: string,
   scope: "private" | "shared" | "global" = "private"
@@ -413,13 +449,13 @@ export async function storeTool(
     const embedding = await getEmbedding(embedText);
 
     await sql.begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${AGENT_ID}, true)`;
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
       await tx`
         INSERT INTO context_environment (
           agent_id, access_scope, tool_name, context_data, embedding
         ) VALUES (
-          ${AGENT_ID}, ${scope}, ${toolName}, ${toolJson}, ${JSON.stringify(embedding)}
+          ${agentId}, ${scope}, ${toolName}, ${toolJson}, ${JSON.stringify(embedding)}
         )
         ON CONFLICT (agent_id, tool_name) DO UPDATE SET
           context_data = EXCLUDED.context_data,

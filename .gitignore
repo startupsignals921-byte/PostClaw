@@ -1,33 +1,5 @@
-# Environment variables
-.env
-.env.*
-!.env.example
-!.env.defaults
-
-# Dependency directories
 node_modules/
-vendor/
-
-# Test coverage
-cov/
-coverage/
-*.lcov
-
-# Build/output directories
 dist/
-out/
-build/
-
-# V8 / Node / Deno profile files
-*-v8.log
-isolate-*-v8.wasm
-
-# OS and Editor metadata
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-*.swo
-
-.yek/
+debug_logs/
+.env
+*.log

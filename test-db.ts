@@ -5,13 +5,16 @@
  * Usage:  npm run build && node dist/test-db.js
  */
 
-import { sql, AGENT_ID, DB_URL } from "./db.js";
-import { searchPostgres } from "./memoryService.js";
+import { sql, POSTCLAW_DB_URL, setEmbeddingConfig } from "./services/db.js";
+import { searchPostgres } from "./services/memoryService.js";
 
 async function main() {
   console.log("=== Database Connection Test ===\n");
-  console.log(`  Target: ${DB_URL}`);
-  console.log(`  Agent:  ${AGENT_ID}\n`);
+  console.log(`  Target: ${POSTCLAW_DB_URL}`);
+  setEmbeddingConfig("http://127.0.0.1:1234", "text-embedding-nomic-embed-text-v2-moe");
+
+  const TEST_AGENT_ID = "test-agent";
+  console.log(`  Agent:  ${TEST_AGENT_ID}\n`);
 
   // ------------------------------------------------------------------
   // 1. Basic connectivity check
@@ -64,11 +67,11 @@ async function main() {
   // ------------------------------------------------------------------
   console.log("[TEST 3] Running searchPostgres('test query')...");
   try {
-    const result = await searchPostgres("test query");
+    const result = await searchPostgres(TEST_AGENT_ID, "test query");
     if (result) {
       console.log(`  ✅  Got ${result.split("\n").length} result(s):`);
       // Print first 3 lines max for brevity
-      result.split("\n").slice(0, 3).forEach((line) => console.log(`     ${line}`));
+      result.split("\n").slice(0, 3).forEach((line: string) => console.log(`     ${line}`));
       if (result.split("\n").length > 3) console.log("     ...");
     } else {
       console.log("  ⚠️  No results returned (table may be empty — this is OK for a fresh DB)");

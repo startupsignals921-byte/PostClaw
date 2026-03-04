@@ -1,5 +1,5 @@
-import postgres from "npm:postgres";
-import { DB_URL, LM_STUDIO_URL, AGENT_ID } from "../PostClaw/db.ts";
+import postgres from "postgres";
+import { POSTCLAW_DB_URL, LM_STUDIO_URL } from "../services/db.js";
 
 // =============================================================================
 // CONFIGURATION — All thresholds are easily tunable here
@@ -23,7 +23,8 @@ const LINK_CANDIDATES_PER_MEMORY = 5;          // Top-N similar memories to cons
 const LINK_BATCH_SIZE = 20;                    // Candidate pairs sent to LLM per batch
 const LINK_SCAN_LIMIT = 50;                    // Max source memories to scan for links per cycle
 
-const sql = postgres(DB_URL);
+const AGENT_ID = process.argv[2] || "default_agent";
+const sql = postgres(POSTCLAW_DB_URL!);
 
 // =============================================================================
 // TYPES
@@ -50,7 +51,7 @@ async function getEmbedding(text: string): Promise<number[]> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input: text, model: "text-embedding-nomic-embed-text-v2-moe" }),
   });
-  const data = await res.json();
+  const data: any = await res.json();
   return data.data[0].embedding;
 }
 
@@ -68,7 +69,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, temperature = 0
     }),
   });
 
-  const data = await res.json();
+  const data: any = await res.json();
   let jsonString = data.choices[0].message.content.trim();
 
   // Strip reasoning block from qwen3.5 output

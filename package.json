@@ -27,10 +27,12 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.48",
-    "@types/node": "^25.3.3",
     "dotenv": "^17.3.1",
     "postgres": "^3.4.8",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3"
   }
 }
