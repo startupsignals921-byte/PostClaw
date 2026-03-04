@@ -167,8 +167,17 @@ const openclawPostgresPlugin = {
             - **Save new facts:** Use the \`memory_store\` tool when a new fact is learned. When using memory_store, ALWAYS assign an appropriate 'tier' (e.g., 'permanent' for core user identity, 'daily' for current tasks) and 'category'.
             - **Link related memories:** Use the \`memory_link\` tool when two memories are related.
             - **Store a tool:** Use the \`tool_store\` tool when a new tool schema is learned.
-            - **Sleep cycle** (consolidates short-term memory): \`deno run -A /home/cl/.openclaw/workspace/scripts/sleep_cycle.ts "${agentId}"\`
-            - **Always Reply**: ALWAYS conclude your turn with a direct response to the user.
+            `;
+
+
+          sysPrompt += `
+            ## Persona Management
+            You have access to the following tools to manage your persona/identity/rules:
+
+            - **Retrieval**: Use \`persona_list\` to see all available persona rules or \`persona_get\` for details.
+            - **Creation**: Use \`persona_create\` to define a new set of rules or identity markers.
+            - **Modification**: Use \`persona_update\` to modify an existing persona rule.
+            - **Deletion**: Use \`persona_delete\` to remove a persona rule.
             `;
 
           sysPrompt += `
@@ -176,6 +185,8 @@ const openclawPostgresPlugin = {
             OpenClaw provides a native heartbeat loop — never use Linux crontab.
             To schedule background tasks, add a checklist to: /home/cl/.openclaw/workspace/HEARTBEAT.md
             On heartbeat poll: read that file. If no pending tasks, reply with ONLY: HEARTBEAT_OK
+
+            **Always Reply**: ALWAYS conclude your turn with a direct response to the user.
             `;
 
           // ==================================================================
