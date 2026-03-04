@@ -519,11 +519,10 @@ export function startService(opts: SleepCycleOptions & { intervalHours?: number 
   const intervalMs = (opts.intervalHours || DEFAULT_INTERVAL_HOURS) * 60 * 60 * 1000;
   const label = `${opts.intervalHours || DEFAULT_INTERVAL_HOURS}h`;
 
-  console.log(`[SLEEP SERVICE] Started — will run every ${label} for agent="${opts.agentId || "main"}"`);
+  console.log(`[SLEEP SERVICE] Started — first cycle in ${label}, then every ${label} for agent="${opts.agentId || "main"}"`);
 
-  // Run once immediately, then on interval
-  runSleepCycle(opts).catch((err) => console.error("[SLEEP SERVICE] Cycle failed:", err));
-
+  // Do NOT run immediately — this blocks plugin install/validation.
+  // First cycle fires after the interval elapses.
   _serviceTimer = setInterval(() => {
     console.log(`[SLEEP SERVICE] Interval tick — starting cycle`);
     runSleepCycle(opts).catch((err) => console.error("[SLEEP SERVICE] Cycle failed:", err));
