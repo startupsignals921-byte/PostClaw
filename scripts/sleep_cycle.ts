@@ -16,6 +16,7 @@
 
 import { getSql, getEmbedding, LM_STUDIO_URL } from "../services/db.js";
 import { ensureAgent } from "../services/memoryService.js";
+import { callLLMviaAgent } from "../services/llm.js";
 
 // =============================================================================
 // CONFIGURATION — All thresholds are easily tunable here
@@ -59,8 +60,6 @@ interface LinkClassification {
 
 export interface SleepCycleOptions {
   agentId?: string;
-  llmUrl?: string;
-  llmModel?: string;
 }
 
 export interface SleepCycleStats {
@@ -74,41 +73,13 @@ export interface SleepCycleStats {
 // UTILITIES
 // =============================================================================
 
-async function callLLM(systemPrompt: string, userPrompt: string, llmUrl: string, llmModel: string, temperature = 0.1): Promise<string> {
-  const baseUrl = llmUrl.replace(/\/v1\/?$/, "");
-  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: llmModel,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`LLM request failed: ${res.status} ${res.statusText}`);
-  }
-
-  const data: any = await res.json();
-  let jsonString = data.choices[0].message.content.trim();
-
-  // Strip reasoning blocks from qwen3.5 output
-  jsonString = jsonString.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-  if (jsonString.startsWith("```json")) jsonString = jsonString.replace(/^```json\n/, "").replace(/\n```$/, "");
-  if (jsonString.startsWith("```")) jsonString = jsonString.replace(/^```\n/, "").replace(/\n```$/, "");
-
-  return jsonString;
-}
+// LLM calls now routed through OpenClaw's configured primary model via callLLMviaAgent
 
 // =============================================================================
 // PHASE 1: EPISODIC CONSOLIDATION
 // =============================================================================
 
-async function phaseConsolidateEpisodic(agentId: string, llmUrl: string, llmModel: string): Promise<number> {
+async function phaseConsolidateEpisodic(agentId: string): Promise<number> {
   console.log(`\n[PHASE 1] Episodic Memory Consolidation`);
   console.log(`─────────────────────────────────────────`);
 
@@ -152,7 +123,7 @@ Output your response EXCLUSIVELY as a JSON object matching this schema:
 Do not use markdown formatting.
 `;
 
-  const jsonString = await callLLM(systemPrompt, `Here is the recent episodic transcript to analyze:\n\n${transcript}`, llmUrl, llmModel);
+  const jsonString = await callLLMviaAgent(`${systemPrompt}\n\nHere is the recent episodic transcript to analyze:\n\n${transcript}`);
   const result: SleepCycleResult = JSON.parse(jsonString);
 
   console.log(`[PHASE 1] Extracted ${result.extracted_durable_facts.length} permanent facts.`);
@@ -321,7 +292,7 @@ async function phaseLowValueCleanup(agentId: string): Promise<number> {
 // PHASE 4: LINK CANDIDATE DISCOVERY & AUTO-LINKING
 // =============================================================================
 
-async function phaseLinkDiscovery(agentId: string, llmUrl: string, llmModel: string): Promise<number> {
+async function phaseLinkDiscovery(agentId: string): Promise<number> {
   console.log(`\n[PHASE 4] Link Candidate Discovery & Auto-Linking`);
   console.log(`─────────────────────────────────────────`);
   console.log(`[PHASE 4] Similarity range: ${LINK_SIMILARITY_MIN}–${LINK_SIMILARITY_MAX}`);
@@ -431,7 +402,7 @@ Use "none" for pairs that don't have a meaningful relationship worth persisting.
 Do not use markdown formatting.
 `;
 
-    const jsonString = await callLLM(systemPrompt, `Classify the relationships between these memory pairs:\n\n${pairsDescription}`, llmUrl, llmModel);
+    const jsonString = await callLLMviaAgent(`${systemPrompt}\n\nClassify the relationships between these memory pairs:\n\n${pairsDescription}`);
 
     let classifications: LinkClassification[];
     try {
@@ -472,8 +443,6 @@ Do not use markdown formatting.
 
 export async function runSleepCycle(opts: SleepCycleOptions = {}): Promise<SleepCycleStats> {
   const agentId = opts.agentId || "main";
-  const llmUrl = opts.llmUrl || LM_STUDIO_URL || "http://127.0.0.1:1234/v1";
-  const llmModel = opts.llmModel || "qwen3.5-9b";
 
   console.log(`\n╔══════════════════════════════════════════════════════╗`);
   console.log(`║  SLEEP CYCLE — Knowledge Graph Maintenance Agent    ║`);
@@ -490,10 +459,10 @@ export async function runSleepCycle(opts: SleepCycleOptions = {}): Promise<Sleep
   };
 
   try {
-    stats.factsExtracted = await phaseConsolidateEpisodic(agentId, llmUrl, llmModel);
+    stats.factsExtracted = await phaseConsolidateEpisodic(agentId);
     stats.duplicatesMerged = await phaseDuplicateDetection(agentId);
     stats.staleArchived = await phaseLowValueCleanup(agentId);
-    stats.linksCreated = await phaseLinkDiscovery(agentId, llmUrl, llmModel);
+    stats.linksCreated = await phaseLinkDiscovery(agentId);
 
     console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     console.log(`  Sleep Cycle Complete 💤`);
@@ -552,8 +521,6 @@ if (require.main === module) {
 
   runSleepCycle({
     agentId: getArg("--agent-id") || args.find((a) => !a.startsWith("--")),
-    llmUrl: getArg("--llm-url"),
-    llmModel: getArg("--llm-model"),
   })
     .then(() => {
       getSql().end();

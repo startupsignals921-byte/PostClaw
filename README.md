@@ -1,10 +1,10 @@
 # PostClaw — PostgreSQL Memory Plugin for OpenClaw
 
 <p align="center">
-<img src="https://github.com/user-attachments/assets/2a7798c6-e711-40fa-bcf2-7416180651cc" 
-        alt="PostClaw Logo - Postmodern Artwork of a giant lobster interspersed with technology and classical designs." 
-        width="800" 
-        height="600" 
+<img src="https://github.com/user-attachments/assets/2a7798c6-e711-40fa-bcf2-7416180651cc"
+        alt="PostClaw Logo - Postmodern Artwork of a giant lobster interspersed with technology and classical designs."
+        width="800"
+        height="600"
         style="display: block; margin: 0 auto" />
 </p>
 
@@ -53,6 +53,7 @@
 2. **PostgreSQL** (v14+) — installed and running. Depending on your system, you may need the `postgresql-<version>-pgvector` package installed. The `pgvector` extension is installed automatically by the setup command.
 3. **Node.js** (v18+) and **npm**
 4. **Embedding Provider** — LM Studio, Ollama, or any OpenAI-compatible endpoint serving an embedding model (e.g. `nomic-embed-text-v2-moe`)
+
    ```json
            "memorySearch": {
                 "provider": "openai",
@@ -63,7 +64,9 @@
                 "model": "text-embedding-nomic-embed-text-v2-moe"
               }
    ```
+
 5. **Tools Enabled** - At the least, you need the following permissions setup in your `openclaw.json`. This is a **Breaking Change** introduced in 2026.3.2 of OpenClaw:
+
    ```json
         "tools": {
             "profile": "messaging",
@@ -96,6 +99,7 @@ openclaw restart
 ```
 
 Done. PostClaw will automatically:
+
 - Connect to the database using the credential it just generated
 - Start injecting RAG context and persona rules into every prompt
 - Begin logging episodic memory after each agent turn
@@ -155,6 +159,7 @@ openclaw postclaw setup [options]
 ```
 
 This command:
+
 1. Connects to PostgreSQL as a superuser
 2. Creates the `memorydb` database (if it doesn't exist)
 3. Installs the `vector` and `pgcrypto` extensions
@@ -647,6 +652,7 @@ Scans semantic memories for near-duplicates using cosine similarity (threshold: 
 ### Phase 3: Low-Value Cleanup
 
 Archives semantic memories that:
+
 - Have `access_count = 0` (never retrieved via RAG)
 - Are older than 7 days
 - Are **not** in protected tiers (`permanent` or `stable`)

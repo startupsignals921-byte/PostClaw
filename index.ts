@@ -522,7 +522,6 @@ const openclawPostgresPlugin = {
           .argument("<file>", "Path to a Markdown persona file (e.g. SOUL.md, AGENTS.md)")
           .description("Bootstrap a Markdown persona file into the agent_persona table")
           .option("--agent-id <id>", "Agent ID to store persona under (default: main)")
-          .option("--llm-model <model>", "Chat model to use for chunking (default: agent's primary model)")
           .action(async (file: string, opts: any) => {
             // Ensure embedding config is set from OpenClaw config before running
             const memCfg = api.config?.agents?.defaults?.memorySearch;
@@ -539,8 +538,6 @@ const openclawPostgresPlugin = {
             const { bootstrapPersona } = await import("./scripts/bootstrap_persona.js");
             await bootstrapPersona(file, {
               agentId: opts.agentId,
-              llmUrl: llmUrl,
-              llmModel: opts.llmModel,
             });
 
             // Clean exit: Stop the timer and close the DB connection
@@ -552,7 +549,6 @@ const openclawPostgresPlugin = {
           .command("sleep")
           .description("Run the sleep cycle (knowledge graph maintenance) manually")
           .option("--agent-id <id>", "Agent ID to run maintenance for (default: main)")
-          .option("--llm-model <model>", "Chat model to use for consolidation/linking")
           .action(async (opts: any) => {
             // Ensure embedding config is set from OpenClaw config before running
             const memCfg = api.config?.agents?.defaults?.memorySearch;
@@ -569,8 +565,6 @@ const openclawPostgresPlugin = {
             const { runSleepCycle } = await import("./scripts/sleep_cycle.js");
             await runSleepCycle({
               agentId: opts.agentId,
-              llmUrl: llmUrl,
-              llmModel: opts.llmModel,
             });
 
             // Clean exit: Stop the timer and close the DB connection
@@ -588,12 +582,8 @@ const openclawPostgresPlugin = {
     if (sleepIntervalHours !== 0) {
       // Start the background sleep cycle service (0 = disabled)
       import("./scripts/sleep_cycle.js").then(({ startService }) => {
-        const memCfg = api.config?.agents?.defaults?.memorySearch;
-        const llmUrl = memCfg?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
-
         startService({
           agentId: "main",
-          llmUrl,
           intervalHours: sleepIntervalHours || 6,
         });
       }).catch((err) => {
