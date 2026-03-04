@@ -6,6 +6,9 @@ export { getSql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, 
 export { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, fetchDynamicTools, storeMemory, updateMemory, linkMemories, storeTool } from "./services/memoryService.js";
 export type { ChatCompletionTool } from "./services/memoryService.js";
 
+import { getSql } from "./services/db.js";
+import { stopService } from "./scripts/sleep_cycle.js";
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -508,6 +511,10 @@ const openclawPostgresPlugin = {
               dbPassword: opts.dbPassword,
               skipConfig: opts.skipConfig,
             });
+
+            // Clean exit: Stop the timer and close the DB connection
+            stopService();
+            await getSql().end();
           });
 
         postclaw
@@ -535,6 +542,10 @@ const openclawPostgresPlugin = {
               llmUrl: llmUrl,
               llmModel: opts.llmModel,
             });
+
+            // Clean exit: Stop the timer and close the DB connection
+            stopService();
+            await getSql().end();
           });
 
         postclaw
@@ -561,6 +572,10 @@ const openclawPostgresPlugin = {
               llmUrl: llmUrl,
               llmModel: opts.llmModel,
             });
+
+            // Clean exit: Stop the timer and close the DB connection
+            stopService();
+            await getSql().end();
           });
       },
       { commands: ["postclaw"] },
@@ -596,7 +611,7 @@ export default openclawPostgresPlugin;
 // STANDALONE ENTRY POINT (for testing)
 // =============================================================================
 
-import { getSql, POSTCLAW_DB_URL, LM_STUDIO_URL, EMBEDDING_MODEL } from "./services/db.js";
+import { POSTCLAW_DB_URL, LM_STUDIO_URL, EMBEDDING_MODEL } from "./services/db.js";
 
 if (require.main === module) {
   console.log("=== PostClaw-swarm plugin loaded ===");
