@@ -60,7 +60,7 @@
 
 ```bash
 # 1. Install the plugin
-openclaw plugins install @postclaw/postclaw        # from npm
+openclaw plugins install @christopherlittle51/postclaw  # from npm
 # OR from a local path:
 openclaw plugins install /path/to/PostClaw
 
@@ -84,7 +84,7 @@ Done. PostClaw will automatically:
 ### From npm (recommended)
 
 ```bash
-openclaw plugins install @postclaw/postclaw
+openclaw plugins install @christopherlittle51/postclaw
 ```
 
 ### From local path
