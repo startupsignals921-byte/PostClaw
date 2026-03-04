@@ -50,9 +50,16 @@
 ## Prerequisites
 
 1. **OpenClaw** — installed and configured
-2. **PostgreSQL** (v14+) — installed and running. The `pgvector` extension is installed automatically by the setup command.
+2. **PostgreSQL** (v14+) — installed and running. Depending on your system, you may need the `postgresql-<version>-pgvector` package installed. The `pgvector` extension is installed automatically by the setup command.
 3. **Node.js** (v18+) and **npm**
 4. **Embedding Provider** — LM Studio, Ollama, or any OpenAI-compatible endpoint serving an embedding model (e.g. `nomic-embed-text-v2-moe`)
+5. **Tools Enabled** - At the least, you need the following permissions setup in your `openclaw.json`. This is a **Breaking Change** introduced in 2026.3.2 of OpenClaw:
+   ```json
+        "tools": {
+            "profile": "messaging",
+            "alsoAllow": ["postclaw"]
+          },
+   ```
 
 ---
 
@@ -64,7 +71,7 @@
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'YOUR_PASSWORD';"
 
 ## Install pgvector plugin (change xx to your postgres version:
-sudo apt install postgresql-16-pgvector  # Ubuntu/Debian example.
+sudo apt install postgresql-xx-pgvector  # Ubuntu/Debian example.
 
 # 1. Install the plugin
 openclaw plugins install @christopherlittle51/postclaw  # from npm
