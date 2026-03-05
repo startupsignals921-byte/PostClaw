@@ -241,9 +241,13 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "memory_search",
-        description: "Search the agent's long-term semantic memory using natural language. Returns the most relevant stored facts and their UUIDs.",
+        description: `Search the agent's long-term semantic memory using natural language. Returns the most relevant stored facts with their UUIDs and metadata.
+
+Each result includes: id (UUID), content, category, tier (permanent/stable/daily/session/volatile), volatility (low/medium/high), confidence (0.0–1.0), usefulness_score, access_count, injection_count, is_pointer, is_archived, metadata (JSON), created_at, updated_at, and expires_at.
+
+Results also include graph-linked memories discovered via multi-hop traversal of the entity_edges knowledge graph. Linked results include persona↔memory cross-links.`,
         parameters: Type.Object({
-          query: Type.String({ description: "Natural language search query" }),
+          query: Type.String({ description: "Natural language search query. Be specific — this drives vector cosine similarity matching against stored memory embeddings." }),
         }),
         async execute(_toolCallId: string, args: { query: string }, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";
@@ -264,14 +268,23 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "memory_store",
-        description: "Store a new durable fact. You can categorize it, set volatility, and add metadata.",
+        description: `Store a new durable fact in the semantic memory database. Each memory is embedded as a vector for similarity search and can be linked in the knowledge graph.
+
+Columns you control:
+- content: The fact text (required). Will be embedded for vector search.
+- category: Short tag for grouping (e.g. 'preference', 'project_detail', 'family_details', 'technical', 'behavioral_rule'). Used for filtering.
+- tier: Permanence level. 'permanent' = never auto-archived. 'stable' = protected from low-value cleanup. 'daily' = standard. 'session' = current session only. 'volatile' = may be cleaned up quickly.
+- volatility: Expected change rate. 'low' = stable facts (names, dates). 'medium' = may change (preferences, statuses). 'high' = frequently changing (moods, temporary states). Affects sleep cycle scoring.
+- metadata: JSON object for additional context (e.g. {"source": "user_stated", "topic": "birthday"}).
+
+Auto-managed columns (do not set): confidence (starts 0.5, adjusted by sleep cycle), usefulness_score, access_count, injection_count, expires_at, is_pointer, content_hash, embedding.`,
         parameters: Type.Object({
-          content: Type.String({ description: "The fact or knowledge to store" }),
+          content: Type.String({ description: "The fact or knowledge to store. Should be a clear, self-contained statement." }),
           scope: Type.Optional(Type.Union([Type.Literal("private"), Type.Literal("shared"), Type.Literal("global")], { default: "private" })),
-          category: Type.Optional(Type.String({ description: "A short categorical tag (e.g., 'preference', 'project_detail')" })),
-          volatility: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], { default: "low" })),
-          tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily" })),
-          metadata: Type.Optional(Type.Any({ description: "A JSON object of additional contextual key-value pairs" }))
+          category: Type.Optional(Type.String({ description: "Short categorical tag for grouping and filtering (e.g. 'preference', 'project_detail', 'family_details', 'technical'). Memories without categories are harder to filter." })),
+          volatility: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], { default: "low", description: "Expected change rate. 'low' for stable facts (names, dates), 'medium' for things that may evolve (preferences), 'high' for temporary states. Affects how the sleep cycle scores and cleans up memories." })),
+          tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily", description: "Permanence level. 'permanent' and 'stable' are protected from automatic archival. 'daily' is standard. 'session' and 'volatile' may be cleaned up sooner." })),
+          metadata: Type.Optional(Type.Any({ description: "JSON object of additional context (e.g. {source: 'user_stated', topic: 'birthday', related_to: 'family'}). Stored as JSONB for flexible querying." }))
         }),
         async execute(_toolCallId: string, args: MemoryStoreArgs, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";
@@ -288,14 +301,18 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "memory_update",
-        description: "Correct or update an existing memory. Archives the old fact and creates a new one with a causal chain link. You can assign categories, volatility, and metadata.",
+        description: `Correct or update an existing memory. Archives the old fact (sets is_archived=true, superseded_by=new_id) and creates a fresh memory with the corrected content, preserving the causal chain.
+
+The new memory inherits nothing from the old one — you must re-specify category, tier, volatility, and metadata. The old memory remains searchable if you query archived content but won't appear in normal retrieval.
+
+Use this instead of memory_store when you know the UUID of the outdated fact.`,
         parameters: Type.Object({
-          old_memory_id: Type.String({ description: "UUID of the outdated memory to supersede" }),
-          new_fact: Type.String({ description: "The corrected or updated fact" }),
-          category: Type.Optional(Type.String({ description: "A short categorical tag (e.g., 'preference', 'project_detail')" })),
-          volatility: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], { default: "low" })),
-          tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily" })),
-          metadata: Type.Optional(Type.Any({ description: "A JSON object of additional contextual key-value pairs" }))
+          old_memory_id: Type.String({ description: "UUID of the outdated memory to supersede. This memory will be archived and linked via superseded_by." }),
+          new_fact: Type.String({ description: "The corrected or updated fact. Will be re-embedded for vector search." }),
+          category: Type.Optional(Type.String({ description: "Category for the new memory (e.g. 'preference', 'project_detail'). Does NOT carry over from old memory." })),
+          volatility: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], { default: "low", description: "Expected change rate for the new fact." })),
+          tier: Type.Optional(Type.Union([Type.Literal("volatile"), Type.Literal("session"), Type.Literal("daily"), Type.Literal("stable"), Type.Literal("permanent")], { default: "daily", description: "Permanence level for the new memory. Set to 'permanent' for core facts that should never be auto-archived." })),
+          metadata: Type.Optional(Type.Any({ description: "JSON metadata for the new memory. Does NOT carry over from old memory." }))
         }),
         async execute(_toolCallId: string, args: MemoryUpdateArgs, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";
@@ -312,11 +329,15 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "memory_link",
-        description: "Create a directed relationship edge between two memories in the knowledge graph.",
+        description: `Create a directed relationship edge between two nodes in the knowledge graph (entity_edges table). Links can connect memory↔memory or persona↔memory. Linked memories are discovered during RAG retrieval via multi-hop graph traversal.
+
+Relationship types: 'related_to' (general topical), 'elaborates' (B adds detail to A), 'contradicts' (B conflicts with A), 'depends_on' (B needs A), 'part_of' (B is subset of A), 'defines' (A defines context for B, typically persona→memory), 'supports' (B provides evidence for A).
+
+The edge weight defaults to 1.0. Edges are also auto-discovered during the sleep cycle, but you should create them immediately when the relationship is obvious.`,
         parameters: Type.Object({
-          source_id: Type.String({ description: "UUID of the source memory" }),
-          target_id: Type.String({ description: "UUID of the target memory" }),
-          relationship: Type.String({ description: "Relationship type (e.g. related_to, elaborates, contradicts, depends_on, part_of)" }),
+          source_id: Type.String({ description: "UUID of the source node (memory or persona trait)" }),
+          target_id: Type.String({ description: "UUID of the target node (memory or persona trait)" }),
+          relationship: Type.String({ description: "Relationship type: 'related_to', 'elaborates', 'contradicts', 'depends_on', 'part_of', 'defines', or 'supports'" }),
         }),
         async execute(_toolCallId: string, args: { source_id: string; target_id: string; relationship: string }, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";
@@ -332,7 +353,11 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "persona_list",
-        description: "List all persona rules for the current agent.",
+        description: `List all persona traits for the current agent from the agent_persona table.
+
+Each entry includes: id (UUID), category (unique per agent, e.g. 'core_identity', 'communication_style'), content (the rule text), is_always_active (whether injected into every prompt), embedding (vector for situational matching), and created_at.
+
+Persona traits tagged is_always_active=true are always in the system prompt. Others are selected by cosine similarity to the current user message.`,
         parameters: Type.Object({}),
         async execute(_toolCallId: string, _args: Record<string, never>, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";
@@ -348,7 +373,7 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "persona_get",
-        description: "Get a specific persona rule by its UUID.",
+        description: "Get a specific persona trait by its UUID. Returns the full record: id, category, content, is_always_active, embedding, and created_at.",
         parameters: Type.Object({
           persona_id: Type.String({ description: "UUID of the persona entry" }),
         }),
@@ -366,12 +391,14 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "persona_update",
-        description: "Update an existing persona rule. You can change the category, content, or whether it is always active.",
+        description: `Update an existing persona trait. You can change the category, content, or is_always_active flag.
+
+Changing content will re-embed the persona for situational matching. Categories are unique per agent — changing a category effectively reclassifies the trait. Setting is_always_active=true means this persona is injected into every system prompt regardless of relevance.`,
         parameters: Type.Object({
           persona_id: Type.String({ description: "UUID of the persona entry to update" }),
-          category: Type.Optional(Type.String({ description: "New category name" })),
-          content: Type.Optional(Type.String({ description: "New content text" })),
-          is_always_active: Type.Optional(Type.Boolean({ description: "Whether this rule is always injected" })),
+          category: Type.Optional(Type.String({ description: "New category name (must be unique per agent, e.g. 'core_identity', 'communication_style', 'behavioral_rule')" })),
+          content: Type.Optional(Type.String({ description: "New content text. Will be re-embedded for situational matching." })),
+          is_always_active: Type.Optional(Type.Boolean({ description: "If true, this persona trait is always injected into the system prompt. If false, it is only injected when contextually relevant." })),
         }),
         async execute(_toolCallId: string, args: { persona_id: string; category?: string; content?: string; is_always_active?: boolean }, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";
@@ -388,9 +415,9 @@ const openclawPostgresPlugin = {
     api.registerTool(
       {
         name: "persona_delete",
-        description: "Delete a persona rule by its UUID.",
+        description: "Delete a persona trait by its UUID. This also removes any persona↔memory edges in the entity_edges knowledge graph that reference this persona.",
         parameters: Type.Object({
-          persona_id: Type.String({ description: "UUID of the persona entry to delete" }),
+          persona_id: Type.String({ description: "UUID of the persona entry to delete. Cascades to remove associated graph edges." }),
         }),
         async execute(_toolCallId: string, args: { persona_id: string }, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
           const agentId = ctx?.agentId || "main";

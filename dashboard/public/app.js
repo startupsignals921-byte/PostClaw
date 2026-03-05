@@ -1039,7 +1039,7 @@ document.getElementById("btn-save-config").addEventListener("click", async () =>
   }
 
   const saveRes = await api("/api/config", {
-    method: "PUT",
+    method: "POST",
     body: JSON.stringify(cfg),
   });
 
