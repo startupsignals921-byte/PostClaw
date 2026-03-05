@@ -396,7 +396,7 @@ export async function updateMemory(agentId: string,
 // =============================================================================
 
 /**
- * Create a directed edge between two memories in the knowledge graph.
+ * Create a directed edge between two memories or personas in the knowledge graph.
  */
 export async function linkMemories(agentId: string,
   sourceId: string,
@@ -404,21 +404,67 @@ export async function linkMemories(agentId: string,
   relationship: string
 ): Promise<{ status: string }> {
   try {
+    const isUuid = (uuid: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
+    
+    if (!isUuid(sourceId) || !isUuid(targetId)) {
+      console.warn(`[GRAPH] Invalid UUID provided for link: ${sourceId} -> ${targetId}`);
+      return { status: "error: invalid UUID format" };
+    }
+
+    if (sourceId === targetId) {
+      return { status: "error: cannot link an entity to itself" };
+    }
+
     await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
-      await tx`
-        INSERT INTO entity_edges (agent_id, source_memory_id, target_memory_id, relationship_type, weight)
-        VALUES (${agentId}, ${sourceId}, ${targetId}, ${relationship}, 1.0)
-        ON CONFLICT (source_memory_id, target_memory_id, relationship_type) DO NOTHING;
+      // Identify source type
+      const srcMem = await tx`SELECT id FROM memory_semantic WHERE id = ${sourceId}`;
+      const srcPer = await tx`SELECT id FROM agent_persona WHERE id = ${sourceId}`;
+      const sourceCol = srcMem.length > 0 ? 'source_memory_id' : (srcPer.length > 0 ? 'source_persona_id' : null);
+
+      // Identify target type
+      const tgtMem = await tx`SELECT id FROM memory_semantic WHERE id = ${targetId}`;
+      const tgtPer = await tx`SELECT id FROM agent_persona WHERE id = ${targetId}`;
+      const targetCol = tgtMem.length > 0 ? 'target_memory_id' : (tgtPer.length > 0 ? 'target_persona_id' : null);
+
+      if (!sourceCol) {
+         throw new Error(`Source ID ${sourceId} not found in memories or personas.`);
+      }
+      if (!targetCol) {
+         throw new Error(`Target ID ${targetId} not found in memories or personas.`);
+      }
+
+      // Check if edge already exists (since ON CONFLICT only fully covers source_memory_id + target_memory_id)
+      const existing = await tx`
+        SELECT id FROM entity_edges 
+        WHERE agent_id = ${agentId}
+          AND (${sourceCol === 'source_memory_id' ? tx`source_memory_id = ${sourceId}` : tx`source_persona_id = ${sourceId}`})
+          AND (${targetCol === 'target_memory_id' ? tx`target_memory_id = ${targetId}` : tx`target_persona_id = ${targetId}`})
+          AND relationship_type = ${relationship}
+        LIMIT 1
       `;
+
+      if (existing.length === 0) {
+        // Insert it dynamically
+        if (sourceCol === 'source_memory_id' && targetCol === 'target_memory_id') {
+          await tx`INSERT INTO entity_edges (agent_id, source_memory_id, target_memory_id, relationship_type, weight) VALUES (${agentId}, ${sourceId}, ${targetId}, ${relationship}, 1.0) ON CONFLICT (source_memory_id, target_memory_id, relationship_type) DO NOTHING`;
+        } else if (sourceCol === 'source_memory_id' && targetCol === 'target_persona_id') {
+          await tx`INSERT INTO entity_edges (agent_id, source_memory_id, target_persona_id, relationship_type, weight) VALUES (${agentId}, ${sourceId}, ${targetId}, ${relationship}, 1.0)`;
+        } else if (sourceCol === 'source_persona_id' && targetCol === 'target_memory_id') {
+          await tx`INSERT INTO entity_edges (agent_id, source_persona_id, target_memory_id, relationship_type, weight) VALUES (${agentId}, ${sourceId}, ${targetId}, ${relationship}, 1.0)`;
+        } else {
+          await tx`INSERT INTO entity_edges (agent_id, source_persona_id, target_persona_id, relationship_type, weight) VALUES (${agentId}, ${sourceId}, ${targetId}, ${relationship}, 1.0)`;
+        }
+      }
     });
 
     console.log(`[GRAPH] Linked ${sourceId.substring(0, 8)} → ${targetId.substring(0, 8)} as "${relationship}"`);
     return { status: "linked" };
-  } catch (err) {
-    console.error("[GRAPH] Failed to link:", err);
-    return { status: `error: ${err}` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[GRAPH] Failed to link:", msg);
+    return { status: `error: ${msg}` };
   }
 }
 

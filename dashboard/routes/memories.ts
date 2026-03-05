@@ -24,6 +24,49 @@ import {
 // =============================================================================
 
 export function registerMemoryRoutes(router: Router): void {
+  // SEARCH — Combined text + semantic search for both memories and personas
+  router.get("/api/memories/search", async (req, res, ctx) => {
+    const agentId = ctx.query.agentId || "main";
+    const q = ctx.query.search || "";
+    if (q.length < 2) return sendJson(res, 200, { ok: true, data: [] });
+
+    const sql = getSql();
+    try {
+      const embedding = await getEmbedding(q);
+      
+      const rows = await sql.begin(async (tx: any) => {
+        await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+
+        // Search both memories and personas by cosine distance
+        return await tx`
+          WITH memory_matches AS (
+            SELECT id, content, 'memory' as type, 
+                   1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
+            FROM memory_semantic
+            WHERE agent_id = ${agentId} AND is_archived = false
+          ),
+          persona_matches AS (
+            SELECT id, ('[' || category || '] ' || content)::text as content, 'persona' as type,
+                   1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
+            FROM agent_persona
+            WHERE agent_id = ${agentId}
+          )
+          SELECT id, content, type, similarity
+          FROM (
+            SELECT * FROM memory_matches
+            UNION ALL
+            SELECT * FROM persona_matches
+          ) combined
+          ORDER BY similarity DESC
+          LIMIT 15
+        `;
+      });
+      sendJson(res, 200, { ok: true, data: rows });
+    } catch (err) {
+      sendError(res, 500, err instanceof Error ? err.message : "Search failed");
+    }
+  });
+
   // LIST — paginated, filterable
   router.get("/api/memories", async (_req, res, ctx) => {
     const q = MemoryListQuerySchema.parse(ctx.query);

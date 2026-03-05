@@ -410,41 +410,18 @@ linkSearchInput.addEventListener(
       return;
     }
 
-    // Search both memories and personas
-    const [memRes, perRes] = await Promise.all([
-      api(`/api/memories?search=${encodeURIComponent(q)}&limit=10`),
-      api("/api/personas"),
-    ]);
-
-    let results = [];
-    if (memRes.ok) {
-      results.push(
-        ...memRes.data.map((m) => ({
-          id: m.id,
-          type: "memory",
-          label: truncate(m.content, 60),
-        })),
-      );
-    }
-    if (perRes.ok) {
-      results.push(
-        ...perRes.data
-          .filter((p) => p.category.toLowerCase().includes(q) || p.content.toLowerCase().includes(q))
-          .map((p) => ({ id: p.id, type: "persona", label: `[${p.category}] ${truncate(p.content, 40)}` })),
-      );
-    }
-
-    if (results.length === 0) {
+    const res = await api(`/api/memories/search?search=${encodeURIComponent(q)}`);
+    if (!res.ok || !res.data || res.data.length === 0) {
       linkSearchResults.style.display = "none";
       return;
     }
 
-    linkSearchResults.innerHTML = results
+    linkSearchResults.innerHTML = res.data
       .map(
         (r) => `
       <div class="link-search-item" data-id="${r.id}" data-type="${r.type}">
         <span class="node-type ${r.type}">${r.type}</span>
-        <span>${r.label}</span>
+        <span>${truncate(r.content, 60)}</span>
       </div>
     `,
       )

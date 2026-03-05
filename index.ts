@@ -387,6 +387,39 @@ Persona traits tagged is_always_active=true are always in the system prompt. Oth
       { names: ["persona_get"] },
     );
 
+    // --- persona_create: Create a new persona entry ---
+    api.registerTool(
+      {
+        name: "persona_create",
+        description: `Create a new persona trait for the current agent. 
+**CRITICAL INSTRUCTION**: You must explicitly report the creation of any new persona trait to the user. Do not use this tool unless explicitly instructed or permitted by the user to do so.
+
+Each entry requires a category (must be unique per agent, e.g. 'core_identity', 'communication_style') and content (the rule text). is_always_active determines whether it is injected into every system prompt (true) or selected by cosine similarity (false).`,
+        parameters: Type.Object({
+          category: Type.String({ description: "Category name (must be unique per agent, e.g. 'core_identity', 'communication_style', 'behavioral_rule')" }),
+          content: Type.String({ description: "The content text of the persona rule. Will be embedded for situational matching." }),
+          is_always_active: Type.Optional(Type.Boolean({ description: "If true, this persona trait is always injected into the system prompt. If false, it is only injected when contextually relevant. Defaults to false." })),
+        }),
+        async execute(_toolCallId: string, args: { category: string; content: string; is_always_active?: boolean }, _signal: unknown, _onUpdate: unknown, ctx: { agentId?: string; workspaceDir?: string }) {
+          const agentId = ctx?.agentId || "main";
+          await ensureAgent(agentId, ctx?.workspaceDir);
+          try {
+            const newPersona = await createPersona(agentId, {
+              category: args.category,
+              content: args.content,
+              is_always_active: args.is_always_active ?? false,
+              access_scope: "private"
+            });
+            return JSON.stringify(newPersona);
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Error creating persona: ${msg}`;
+          }
+        },
+      },
+      { names: ["persona_create"] },
+    );
+
     // --- persona_update: Update a persona entry ---
     api.registerTool(
       {
