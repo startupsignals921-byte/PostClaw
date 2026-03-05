@@ -106,8 +106,8 @@ async function loadPersonas() {
       <thead><tr><th>Category</th><th>Content</th><th>Always Active</th><th>Actions</th></tr></thead>
       <tbody>
         ${res.data
-          .map(
-            (p) => `
+      .map(
+        (p) => `
           <tr>
             <td>${p.category}</td>
             <td title="${p.content.replace(/"/g, "&quot;")}">${truncate(p.content, 60)}</td>
@@ -117,8 +117,8 @@ async function loadPersonas() {
               <button class="btn-sm btn-danger" onclick="deletePersona('${p.id}')">🗑️</button>
             </td>
           </tr>`,
-          )
-          .join("")}
+      )
+      .join("")}
       </tbody>
     </table>
   `;
@@ -217,15 +217,15 @@ async function loadMemories() {
       </tr></thead>
       <tbody>
         ${memories
-          .map(
-            (m) => {
-              const created = m.created_at ? new Date(m.created_at).toLocaleDateString() : '—';
-              const conf = m.confidence != null ? m.confidence.toFixed(2) : '—';
-              const vol = m.volatility || '—';
-              const score = m.usefulness_score != null ? m.usefulness_score.toFixed(1) : '—';
-              const acc = m.access_count ?? 0;
-              const inj = m.injection_count ?? 0;
-              return `
+      .map(
+        (m) => {
+          const created = m.created_at ? new Date(m.created_at).toLocaleDateString() : '—';
+          const conf = m.confidence != null ? m.confidence.toFixed(2) : '—';
+          const vol = m.volatility || '—';
+          const score = m.usefulness_score != null ? m.usefulness_score.toFixed(1) : '—';
+          const acc = m.access_count ?? 0;
+          const inj = m.injection_count ?? 0;
+          return `
           <tr${m.is_pointer ? ' class="memory-pointer"' : ''}>
             <td title="${(m.content || '').replace(/"/g, '&quot;')}">${truncate(m.content, 50)}</td>
             <td>${m.category || '—'}</td>
@@ -241,9 +241,9 @@ async function loadMemories() {
               <button class="btn-sm btn-danger" onclick="deleteMemory('${m.id}')">🗑️</button>
             </td>
           </tr>`;
-            },
-          )
-          .join('')}
+        },
+      )
+      .join('')}
       </tbody>
     </table>
   `;
@@ -1062,10 +1062,62 @@ document.getElementById("btn-reset-config").addEventListener("click", async () =
 });
 
 // =============================================================================
+// LIGHT SLIDER
+// =============================================================================
+
+const FILL_LIGHT = 0.75;
+
+function applyLighting(key) {
+  const root = document.documentElement;
+  const k = parseFloat(key);
+
+  root.style.setProperty('--amb-key-light-intensity', k);
+  root.style.setProperty('--amb-fill-light-intensity', FILL_LIGHT);
+
+  // Text must always contrast against amb-surface (lightness ≈ key × 100%).
+  // Step function: dark surface → light text, light surface → dark text.
+  const s = k * 100;
+  let textL, secL, mutL;
+
+  if (s < 50) {
+    textL = 92;
+    secL = 68;
+    mutL = 55;
+  } else {
+    textL = 10;
+    secL = 30;
+    mutL = 40;
+  }
+
+  root.style.setProperty('--text-primary', `hsl(0 0% ${textL}%)`);
+  root.style.setProperty('--text-secondary', `hsl(0 0% ${secL}%)`);
+  root.style.setProperty('--text-muted', `hsl(0 0% ${mutL}%)`);
+
+  const kDisp = document.getElementById('key-light-value');
+  if (kDisp) kDisp.textContent = k.toFixed(2);
+}
+
+function initLightSlider() {
+  const slider = document.getElementById('key-light-slider');
+  if (!slider) return;
+
+  const stored = localStorage.getItem('postclaw-key-light');
+  if (stored) slider.value = stored;
+
+  applyLighting(slider.value);
+
+  slider.addEventListener('input', () => {
+    applyLighting(slider.value);
+    localStorage.setItem('postclaw-key-light', slider.value);
+  });
+}
+
+// =============================================================================
 // INIT
 // =============================================================================
 
 async function init() {
+  initLightSlider();
   await loadAgents();
   loadPersonas();
   loadMemories();

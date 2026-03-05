@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,12 +16,20 @@
   <!-- Custom styles -->
   <link rel="stylesheet" href="/styles.css" />
 </head>
+
 <body>
   <!-- Header -->
   <header class="dashboard-header ambient amb-surface amb-chamfer amb-elevation-3">
     <div class="header-content">
       <h1>🦐 PostClaw</h1>
       <div class="header-controls">
+        <div class="light-slider-group">
+          <label for="key-light-slider">🌑</label>
+          <input type="range" id="key-light-slider" class="light-slider" min="0.08" max="0.92" step="0.01"
+            value="0.22" />
+          <label for="key-light-slider">☀️</label>
+          <span id="key-light-value" class="light-value">0.22</span>
+        </div>
         <label for="agent-select">Agent:</label>
         <select id="agent-select" class="ambient amb-surface-concave amb-fillet amb-elevation-0">
           <option value="main">main</option>
@@ -31,8 +40,10 @@
 
   <!-- Tab Navigation -->
   <nav class="tab-nav ambient amb-surface amb-chamfer amb-elevation-2">
-    <button class="tab-btn active ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="personas">🎭 Personas</button>
-    <button class="tab-btn ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="memories">🧠 Memories</button>
+    <button class="tab-btn active ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="personas">🎭
+      Personas</button>
+    <button class="tab-btn ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="memories">🧠
+      Memories</button>
     <button class="tab-btn ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="graph">🕸️ Graph</button>
     <button class="tab-btn ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="scripts">⚡ Scripts</button>
     <button class="tab-btn ambient amb-surface-convex amb-fillet amb-elevation-1" data-tab="config">⚙️ Config</button>
@@ -56,12 +67,12 @@
         <div class="form-row">
           <label for="persona-category">Category</label>
           <input id="persona-category" type="text" placeholder="e.g., communication_style" maxlength="50"
-                 class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
         </div>
         <div class="form-row">
           <label for="persona-content">Content</label>
           <textarea id="persona-content" rows="4" placeholder="Persona rule or instruction..."
-                    class="ambient amb-surface-concave amb-fillet amb-elevation-0"></textarea>
+            class="ambient amb-surface-concave amb-fillet amb-elevation-0"></textarea>
         </div>
         <div class="form-row form-row-inline">
           <label>
@@ -85,7 +96,8 @@
         <h3>📄 Workspace Files</h3>
         <p class="hint">View .md files from the workspace. Import directly into personas or memories.</p>
         <div id="workspace-files" class="workspace-files"></div>
-        <pre id="workspace-content" class="workspace-content ambient amb-surface-concave amb-fillet amb-elevation-0" style="display:none;"></pre>
+        <pre id="workspace-content" class="workspace-content ambient amb-surface-concave amb-fillet amb-elevation-0"
+          style="display:none;"></pre>
       </div>
     </section>
 
@@ -104,7 +116,7 @@
       <!-- Filters -->
       <div class="filters ambient amb-surface-concave amb-fillet amb-elevation-0">
         <input id="memory-search" type="text" placeholder="Search memories..."
-               class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+          class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
         <select id="memory-tier-filter" class="ambient amb-surface-concave amb-fillet amb-elevation-0">
           <option value="">All Tiers</option>
           <option value="permanent">Permanent</option>
@@ -126,13 +138,13 @@
         <div class="form-row">
           <label for="memory-content">Content</label>
           <textarea id="memory-content" rows="3" placeholder="Memory content..."
-                    class="ambient amb-surface-concave amb-fillet amb-elevation-0"></textarea>
+            class="ambient amb-surface-concave amb-fillet amb-elevation-0"></textarea>
         </div>
         <div class="form-row form-row-grid">
           <div>
             <label for="memory-category">Category</label>
             <input id="memory-category" type="text" placeholder="e.g., preference"
-                   class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
           </div>
           <div>
             <label for="memory-tier">Tier</label>
@@ -152,21 +164,24 @@
           <div id="memory-edge-list" class="edge-list"></div>
           <div class="link-form">
             <input id="link-target-search" type="text" placeholder="Search for target memory or persona..."
-                   class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
             <div id="link-target-results" class="link-search-results" style="display:none;"></div>
             <input type="hidden" id="link-target-id" />
             <input type="hidden" id="link-target-type" />
             <input id="link-relationship" type="text" placeholder="Relationship (e.g., related_to, supports)"
-                   class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <button id="btn-add-link" class="btn-secondary btn-sm ambient amb-surface-convex amb-fillet amb-elevation-1">
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <button id="btn-add-link"
+              class="btn-secondary btn-sm ambient amb-surface-convex amb-fillet amb-elevation-1">
               + Add Link
             </button>
           </div>
         </div>
 
         <div class="form-actions">
-          <button id="btn-save-memory" class="btn-primary ambient amb-surface-convex amb-chamfer amb-elevation-1">Save</button>
-          <button id="btn-cancel-memory" class="btn-secondary ambient amb-surface-convex amb-fillet amb-elevation-1">Cancel</button>
+          <button id="btn-save-memory"
+            class="btn-primary ambient amb-surface-convex amb-chamfer amb-elevation-1">Save</button>
+          <button id="btn-cancel-memory"
+            class="btn-secondary ambient amb-surface-convex amb-fillet amb-elevation-1">Cancel</button>
         </div>
       </div>
 
@@ -175,18 +190,19 @@
         <div class="form-row">
           <label for="import-content">Markdown Content</label>
           <textarea id="import-content" rows="8" placeholder="Paste markdown content here..."
-                    class="ambient amb-surface-concave amb-fillet amb-elevation-0"></textarea>
+            class="ambient amb-surface-concave amb-fillet amb-elevation-0"></textarea>
         </div>
         <div class="form-row">
           <label for="import-filename">Source Filename (optional)</label>
           <input id="import-filename" type="text" placeholder="e.g., memory.md"
-                 class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
         </div>
         <div class="form-actions">
           <button id="btn-run-import" class="btn-primary ambient amb-surface-convex amb-chamfer amb-elevation-1">
             Import
           </button>
-          <button id="btn-cancel-import" class="btn-secondary ambient amb-surface-convex amb-fillet amb-elevation-1">Cancel</button>
+          <button id="btn-cancel-import"
+            class="btn-secondary ambient amb-surface-convex amb-fillet amb-elevation-1">Cancel</button>
         </div>
       </div>
 
@@ -218,7 +234,8 @@
         <div id="graph-info" class="graph-info ambient amb-surface amb-fillet amb-elevation-1">
           <span id="graph-stats">Scroll to zoom • Drag to pan • Click a node for details • Shift+drag to link</span>
         </div>
-        <div id="graph-detail" class="graph-detail-panel ambient amb-surface amb-chamfer amb-elevation-2" style="display:none;"></div>
+        <div id="graph-detail" class="graph-detail-panel ambient amb-surface amb-chamfer amb-elevation-2"
+          style="display:none;"></div>
       </div>
     </section>
 
@@ -230,7 +247,8 @@
       <div class="scripts-grid">
         <div class="script-card ambient amb-surface amb-chamfer amb-elevation-2">
           <h3>💤 Sleep Cycle</h3>
-          <p>Run knowledge graph maintenance: episodic consolidation, duplicate detection, low-value cleanup, and link discovery.</p>
+          <p>Run knowledge graph maintenance: episodic consolidation, duplicate detection, low-value cleanup, and link
+            discovery.</p>
           <button id="btn-run-sleep" class="btn-primary ambient amb-surface-convex amb-chamfer amb-elevation-1">
             Run Sleep Cycle
           </button>
@@ -241,9 +259,10 @@
           <p>Bootstrap a Markdown persona file into the agent_persona table.</p>
           <div class="form-row">
             <input id="persona-import-file" type="text" placeholder="/path/to/SOUL.md"
-                   class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
           </div>
-          <button id="btn-run-persona-import" class="btn-primary ambient amb-surface-convex amb-chamfer amb-elevation-1">
+          <button id="btn-run-persona-import"
+            class="btn-primary ambient amb-surface-convex amb-chamfer amb-elevation-1">
             Import Persona
           </button>
           <div id="persona-import-status" class="script-status"></div>
@@ -272,23 +291,31 @@
           <p class="hint">Controls how memories are retrieved and injected into the agent's context window.</p>
           <div class="form-row">
             <label for="cfg-rag-semantic-limit">Semantic Matches (Direct)</label>
-            <input id="cfg-rag-semantic-limit" type="number" min="1" max="50" placeholder="7" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <small>Number of memories fetched via vector cosine similarity before graph traversal. Higher = more direct context but slower.</small>
+            <input id="cfg-rag-semantic-limit" type="number" min="1" max="50" placeholder="7"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <small>Number of memories fetched via vector cosine similarity before graph traversal. Higher = more direct
+              context but slower.</small>
           </div>
           <div class="form-row">
             <label for="cfg-rag-total-limit">Total Matches (Final)</label>
-            <input id="cfg-rag-total-limit" type="number" min="1" max="100" placeholder="15" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <small>Maximum total memories injected into context after adding graph-linked results. Cap this to avoid overloading the context window.</small>
+            <input id="cfg-rag-total-limit" type="number" min="1" max="100" placeholder="15"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <small>Maximum total memories injected into context after adding graph-linked results. Cap this to avoid
+              overloading the context window.</small>
           </div>
           <div class="form-row">
             <label for="cfg-rag-linked-similarity">Linked Similarity Floor</label>
-            <input id="cfg-rag-linked-similarity" type="number" step="0.01" min="0" max="1" placeholder="0.80" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <small>Boosted similarity score assigned to memories found via graph traversal (linked). Higher = more weight given to linked results. (0.0–1.0)</small>
+            <input id="cfg-rag-linked-similarity" type="number" step="0.01" min="0" max="1" placeholder="0.80"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <small>Boosted similarity score assigned to memories found via graph traversal (linked). Higher = more
+              weight given to linked results. (0.0–1.0)</small>
           </div>
           <div class="form-row">
             <label for="cfg-rag-max-traversal-depth">Graph Traversal Depth</label>
-            <input id="cfg-rag-max-traversal-depth" type="number" min="1" max="10" placeholder="3" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <small>Maximum number of edge hops during recursive graph traversal (A→B→C = depth 2). Higher depth discovers distant connections but increases query time.</small>
+            <input id="cfg-rag-max-traversal-depth" type="number" min="1" max="10" placeholder="3"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <small>Maximum number of edge hops during recursive graph traversal (A→B→C = depth 2). Higher depth
+              discovers distant connections but increases query time.</small>
           </div>
         </div>
 
@@ -298,33 +325,40 @@
           <p class="hint">Controls how persona traits are selected and injected into the agent's system prompt.</p>
           <div class="form-row">
             <label for="cfg-persona-situational-limit">Situational Persona Limit</label>
-            <input id="cfg-persona-situational-limit" type="number" min="1" max="20" placeholder="3" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <small>Number of context-relevant persona traits injected per prompt (in addition to always-active traits). Higher = more identity context.</small>
+            <input id="cfg-persona-situational-limit" type="number" min="1" max="20" placeholder="3"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <small>Number of context-relevant persona traits injected per prompt (in addition to always-active traits).
+              Higher = more identity context.</small>
           </div>
         </div>
 
         <!-- System Prompt Templates -->
         <div class="config-card config-card-full ambient amb-surface amb-chamfer amb-elevation-2">
           <h3>📝 System Prompt Templates</h3>
-          <p class="hint">These blocks are injected into the agent's system prompt. Changes take effect on the next user message. Use concise, behavior-guiding language.</p>
+          <p class="hint">These blocks are injected into the agent's system prompt. Changes take effect on the next user
+            message. Use concise, behavior-guiding language.</p>
           <div class="form-row">
             <label for="cfg-prompt-memory">Memory Management Rules</label>
-            <textarea id="cfg-prompt-memory" rows="5" class="ambient amb-surface-concave amb-fillet amb-elevation-0 code-font"></textarea>
+            <textarea id="cfg-prompt-memory" rows="5"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0 code-font"></textarea>
             <small>Instructions for how the agent should silently save, update, and link knowledge.</small>
           </div>
           <div class="form-row">
             <label for="cfg-prompt-persona">Persona Management Rules</label>
-            <textarea id="cfg-prompt-persona" rows="4" class="ambient amb-surface-concave amb-fillet amb-elevation-0 code-font"></textarea>
+            <textarea id="cfg-prompt-persona" rows="4"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0 code-font"></textarea>
             <small>Instructions for when/how the agent modifies its own persona traits.</small>
           </div>
           <div class="form-row">
             <label for="cfg-prompt-heartbeat">Heartbeat / Autonomous Rules</label>
-            <textarea id="cfg-prompt-heartbeat" rows="4" class="ambient amb-surface-concave amb-fillet amb-elevation-0 code-font"></textarea>
+            <textarea id="cfg-prompt-heartbeat" rows="4"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0 code-font"></textarea>
             <small>Autonomous loop behavior. Use {{heartbeatFilePath}} as a placeholder for the path below.</small>
           </div>
           <div class="form-row">
             <label for="cfg-prompt-heartbeat-path">Heartbeat File Path</label>
-            <input id="cfg-prompt-heartbeat-path" type="text" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <input id="cfg-prompt-heartbeat-path" type="text"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
             <small>Absolute path to the heartbeat task file the agent checks on each autonomous loop.</small>
           </div>
         </div>
@@ -332,57 +366,71 @@
         <!-- Sleep Cycle -->
         <div class="config-card config-card-full ambient amb-surface amb-chamfer amb-elevation-2">
           <h3>💤 Sleep & Maintenance</h3>
-          <p class="hint">Thresholds for the background knowledge graph optimization cycle. These run when "Sleep Cycle" is triggered.</p>
+          <p class="hint">Thresholds for the background knowledge graph optimization cycle. These run when "Sleep Cycle"
+            is triggered.</p>
           <div class="form-row-grid">
             <div class="form-row">
               <label for="cfg-sleep-dedup-threshold">Dedup Similarity</label>
-              <input id="cfg-sleep-dedup-threshold" type="number" step="0.01" min="0" max="1" placeholder="0.80" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-              <small>Merge memories with cosine similarity above this threshold. Higher = stricter dedup (fewer merges). Default 0.80.</small>
+              <input id="cfg-sleep-dedup-threshold" type="number" step="0.01" min="0" max="1" placeholder="0.80"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <small>Merge memories with cosine similarity above this threshold. Higher = stricter dedup (fewer merges).
+                Default 0.80.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-low-value-age">Cleanup Age (Days)</label>
-              <input id="cfg-sleep-low-value-age" type="number" min="1" max="365" placeholder="7" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-low-value-age" type="number" min="1" max="365" placeholder="7"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>Archive unused memories older than this many days. Prevents memory bloat over time.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-link-min">Link Min Similarity</label>
-              <input id="cfg-sleep-link-min" type="number" step="0.01" min="0" max="1" placeholder="0.65" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-link-min" type="number" step="0.01" min="0" max="1" placeholder="0.65"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>During sleep, only auto-create links between memories with similarity above this floor.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-link-max">Link Max Similarity</label>
-              <input id="cfg-sleep-link-max" type="number" step="0.01" min="0" max="1" placeholder="0.92" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-              <small>During sleep, skip link creation between memories with similarity above this ceiling (likely duplicates).</small>
+              <input id="cfg-sleep-link-max" type="number" step="0.01" min="0" max="1" placeholder="0.92"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <small>During sleep, skip link creation between memories with similarity above this ceiling (likely
+                duplicates).</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-episodic-batch">Episodic Batch Limit</label>
-              <input id="cfg-sleep-episodic-batch" type="number" min="1" max="100" placeholder="100" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-episodic-batch" type="number" min="1" max="100" placeholder="100"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>Number of episodic log entries to consolidate per sleep cycle.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-dedup-scan">Duplicate Scan Limit</label>
-              <input id="cfg-sleep-dedup-scan" type="number" min="1" max="500" placeholder="200" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-dedup-scan" type="number" min="1" max="500" placeholder="200"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>Number of memories to scan for near-duplicates per sleep cycle.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-link-candidates">Link Candidates Per Memory</label>
-              <input id="cfg-sleep-link-candidates" type="number" min="1" max="50" placeholder="5" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-link-candidates" type="number" min="1" max="50" placeholder="5"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>Number of similar memories to consider for link creation per source memory.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-link-batch">Link Batch Size</label>
-              <input id="cfg-sleep-link-batch" type="number" min="1" max="100" placeholder="20" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-link-batch" type="number" min="1" max="100" placeholder="20"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>Number of candidate pairs to send to LLM for classification in each batch.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-link-scan">Link Scan Limit</label>
-              <input id="cfg-sleep-link-scan" type="number" min="1" max="500" placeholder="50" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+              <input id="cfg-sleep-link-scan" type="number" min="1" max="500" placeholder="50"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
               <small>Total number of memories to scan for potential links per sleep cycle.</small>
             </div>
             <div class="form-row">
               <label for="cfg-sleep-protected-tiers">Protected Tiers (Low-Value Cleanup)</label>
-              <input id="cfg-sleep-protected-tiers" type="text" class="ambient amb-surface-concave amb-fillet amb-elevation-0" placeholder="permanent,stable" />
-              <small>Comma-separated list of memory tiers exempt from low-value archival. Default: permanent, stable.</small>
+              <input id="cfg-sleep-protected-tiers" type="text"
+                class="ambient amb-surface-concave amb-fillet amb-elevation-0" placeholder="permanent,stable" />
+              <small>Comma-separated list of memory tiers exempt from low-value archival. Default: permanent,
+                stable.</small>
             </div>
           </div>
         </div>
@@ -393,8 +441,10 @@
           <p class="hint">Internal settings for deduplication and event processing.</p>
           <div class="form-row">
             <label for="cfg-dedup-cache">Event Cache Size</label>
-            <input id="cfg-dedup-cache" type="number" min="100" max="10000" placeholder="1000" class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
-            <small>Number of recent event IDs kept in memory to prevent double-processing. Increase for high-throughput agents.</small>
+            <input id="cfg-dedup-cache" type="number" min="100" max="10000" placeholder="1000"
+              class="ambient amb-surface-concave amb-fillet amb-elevation-0" />
+            <small>Number of recent event IDs kept in memory to prevent double-processing. Increase for high-throughput
+              agents.</small>
           </div>
         </div>
       </div>
@@ -407,4 +457,5 @@
 
   <script src="/app.js"></script>
 </body>
+
 </html>
