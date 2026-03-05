@@ -13,10 +13,10 @@
 :root {
   --amb-light-x: -0.7;
   --amb-light-y: -0.8;
-  --amb-key-light-intensity: 0.45;
+  --amb-key-light-intensity: 0.25;
   --amb-fill-light-intensity: 0.18;
-  --amb-surface-color: #1a1d27;
-  --amb-environment-color: #0f1117;
+  --amb-surface-color: #2e3b67;
+  --amb-environment-color: #7c8398;
 
   /* Semantic tokens (minimal — favor texture over color) */
   --bg-primary: #0f1117;
@@ -24,8 +24,8 @@
   --bg-surface-alt: #22252f;
   --bg-hover: #2a2d3a;
   --text-primary: #e8eaed;
-  --text-secondary: #9aa0a6;
-  --text-muted: #6b7280;
+  --text-secondary: #d1d5da;
+  --text-muted: #9ca7bd;
   --accent-cyan: #00d4aa;
   --accent-blue: #4f9cf7;
   --accent-amber: #f7b955;
