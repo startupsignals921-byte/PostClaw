@@ -43,12 +43,12 @@ export async function ensureAgent(agentId: string, workspaceDir?: string): Promi
 export async function searchPostgres(
   agentId: string, 
   userText: string, 
-  options: { semanticLimit?: number; linkedSimilarity?: number; totalLimit?: number } = {}
+  options: { semanticLimit?: number; linkedSimilarity?: number; totalLimit?: number; maxTraversalDepth?: number } = {}
 ): Promise<string | null> {
   let contextString: string | null = null;
   const semanticLimit = options.semanticLimit ?? 7;
-  const linkedSimilarity = options.linkedSimilarity ?? 0.8;
   const totalLimit = options.totalLimit ?? 15;
+  const maxDepth = options.maxTraversalDepth ?? 3;
 
   try {
     const embedding = await getEmbedding(userText);
@@ -58,39 +58,63 @@ export async function searchPostgres(
     await getSql().begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
+      // Recursive CTE: multi-level graph traversal with cycle detection
       const results = await tx`
-        WITH semantic_matches AS (
+        WITH RECURSIVE semantic_matches AS (
           SELECT id, content, 1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
           FROM memory_semantic
           WHERE agent_id = ${agentId} AND is_archived = false
           ORDER BY similarity DESC
           LIMIT ${semanticLimit}
         ),
-        linked_matches AS (
-          SELECT m.id, m.content, ${linkedSimilarity}::float8 AS similarity, e.relationship_type, sm.id AS source_match_id
-          FROM entity_edges e
-          JOIN memory_semantic m ON (e.target_memory_id = m.id OR e.source_memory_id = m.id)
-          JOIN semantic_matches sm ON (e.source_memory_id = sm.id OR e.target_memory_id = sm.id)
-          WHERE e.agent_id = ${agentId} AND m.id != sm.id AND m.is_archived = false
-        ),
-        final_matches AS (
-          SELECT id, content, similarity, NULL as relationship_type FROM semantic_matches
+        graph_walk AS (
+          -- Base case: direct semantic matches
+          SELECT id, content, similarity, NULL::varchar AS relationship_type,
+                 0 AS depth, ARRAY[id] AS visited
+          FROM semantic_matches
+
           UNION ALL
-          SELECT id, content, similarity, relationship_type FROM linked_matches
-          ORDER BY similarity DESC
-          LIMIT ${totalLimit}
+
+          -- Recursive step: follow edges up to maxDepth hops
+          SELECT m.id, m.content,
+                 gw.similarity * 0.85 AS similarity,
+                 e.relationship_type,
+                 gw.depth + 1 AS depth,
+                 gw.visited || m.id
+          FROM graph_walk gw
+          JOIN entity_edges e ON (
+            (e.source_memory_id = gw.id OR e.target_memory_id = gw.id)
+            AND e.agent_id = ${agentId}
+          )
+          JOIN memory_semantic m ON (
+            m.id = CASE
+              WHEN e.source_memory_id = gw.id THEN e.target_memory_id
+              ELSE e.source_memory_id
+            END
+          )
+          WHERE gw.depth < ${maxDepth}
+            AND m.is_archived = false
+            AND m.id != ALL(gw.visited)
+        ),
+        deduped AS (
+          SELECT DISTINCT ON (id) id, content, similarity, relationship_type, depth
+          FROM graph_walk
+          ORDER BY id, similarity DESC
         )
-        SELECT * FROM final_matches;
+        SELECT id, content, similarity, relationship_type, depth
+        FROM deduped
+        ORDER BY similarity DESC
+        LIMIT ${totalLimit};
       `;
 
-      console.log(`[SEARCH] Query returned ${results.length} row(s) for agent=${agentId}`);
+      console.log(`[SEARCH] Query returned ${results.length} row(s) for agent=${agentId} (max depth ${maxDepth})`);
 
       if (results.length > 0) {
-        contextString = (results as SearchResultRow[])
+        contextString = (results as (SearchResultRow & { depth: number })[])
           .map((r) => {
             const pct = (r.similarity * 100).toFixed(1) + "%";
             const label = r.relationship_type
-              ? `Linked: ${r.relationship_type}, ${pct}`
+              ? `Linked[${r.depth}]: ${r.relationship_type}, ${pct}`
               : pct;
             return `[ID: ${r.id}] (${label}) - ${r.content}`;
           })

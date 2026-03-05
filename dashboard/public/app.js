@@ -1,99 +1,90 @@
 /**
- * PostClaw Dashboard — Frontend Application
+ * PostClaw Dashboard — Frontend application
  *
- * Tab management, API calls, DOM updates, D3 knowledge graph.
+ * Vanilla JS SPA: tab management, agent selection, CRUD for personas/memories,
+ * D3.js knowledge graph with persona nodes, memory linking, workspace import,
+ * script runner, and full config editor.
  */
 
 // =============================================================================
-// STATE
+// GLOBALS
 // =============================================================================
 
 let currentAgent = "main";
-let memoryPage = 0;
-const PAGE_SIZE = 50;
+const API = "";
+let memoryPage = { offset: 0, limit: 50, total: 0 };
+let graphInstances = { simulation: null, svg: null, g: null, zoom: null };
+let showLabels = true;
+let allNodes = [];   // cached for link search
+let allEdges = [];   // cached for link search
+let shiftLinkState = null; // { sourceNode, line } for shift+drag linking
 
 // =============================================================================
-// UTILITIES
+// UTILS
 // =============================================================================
 
-function $(id) { return document.getElementById(id); }
-
-async function api(method, path, body = null) {
+async function api(path, opts = {}) {
   const sep = path.includes("?") ? "&" : "?";
-  const url = `${path}${sep}agentId=${encodeURIComponent(currentAgent)}`;
-  const opts = { method, headers: { "Content-Type": "application/json" } };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(url, opts);
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.error || "API error");
-  return data.data;
+  const url = `${API}${path}${sep}agentId=${encodeURIComponent(currentAgent)}`;
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  return res.json();
 }
 
-function toast(message, type = "info") {
-  const container = $("toast-container");
+function toast(msg, type = "info") {
+  const container = document.getElementById("toast-container");
   const el = document.createElement("div");
   el.className = `toast toast-${type}`;
-  el.textContent = message;
+  el.textContent = msg;
   container.appendChild(el);
   setTimeout(() => el.remove(), 3000);
 }
 
-function tierBadge(tier) {
-  return `<span class="badge badge-${tier || 'daily'}">${tier || "daily"}</span>`;
+function badge(value, prefix = "badge") {
+  return `<span class="badge ${prefix}-${value}">${value}</span>`;
 }
 
-function boolBadge(val) {
-  return `<span class="badge badge-${val}">${val ? "✓" : "✗"}</span>`;
-}
-
-function truncate(str, len = 80) {
+function truncate(str, max = 80) {
   if (!str) return "";
-  return str.length > len ? str.substring(0, len) + "…" : str;
+  return str.length > max ? str.substring(0, max) + "…" : str;
 }
 
 // =============================================================================
 // TAB MANAGEMENT
 // =============================================================================
 
-document.querySelectorAll(".tab-btn").forEach(btn => {
+document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
-    $(`tab-${btn.dataset.tab}`).classList.add("active");
+    const panel = document.getElementById(`tab-${btn.dataset.tab}`);
+    if (panel) panel.classList.add("active");
 
-    // Load data for the active tab
-    if (btn.dataset.tab === "personas") loadPersonas();
-    if (btn.dataset.tab === "memories") loadMemories();
     if (btn.dataset.tab === "graph") loadGraph();
     if (btn.dataset.tab === "config") loadConfig();
   });
 });
 
 // =============================================================================
-// AGENT SELECTOR
+// AGENT SELECTION
 // =============================================================================
 
 async function loadAgents() {
-  try {
-    const agents = await api("GET", "/api/agents");
-    const select = $("agent-select");
-    select.innerHTML = "";
-    agents.forEach(a => {
-      const opt = document.createElement("option");
-      opt.value = a.id;
-      opt.textContent = a.name || a.id;
-      if (a.id === currentAgent) opt.selected = true;
-      select.appendChild(opt);
-    });
-  } catch { /* agents table might be empty */ }
+  const res = await api("/api/agents");
+  if (!res.ok) return;
+  const select = document.getElementById("agent-select");
+  select.innerHTML = res.data.map((a) => `<option value="${a.id}">${a.id}</option>`).join("");
+  select.value = currentAgent;
 }
 
-$("agent-select").addEventListener("change", (e) => {
+document.getElementById("agent-select").addEventListener("change", (e) => {
   currentAgent = e.target.value;
-  // Reload active tab
-  const activeTab = document.querySelector(".tab-btn.active");
-  if (activeTab) activeTab.click();
+  loadPersonas();
+  loadMemories();
+  loadWorkspaceFiles();
 });
 
 // =============================================================================
@@ -101,110 +92,91 @@ $("agent-select").addEventListener("change", (e) => {
 // =============================================================================
 
 async function loadPersonas() {
-  try {
-    const personas = await api("GET", "/api/personas");
-    const container = $("persona-list");
-    if (personas.length === 0) {
-      container.innerHTML = '<p class="hint">No persona entries yet. Create one above.</p>';
-      return;
-    }
-    container.innerHTML = `
-      <table class="data-table">
-        <thead><tr>
-          <th>Category</th><th>Content</th><th>Always Active</th><th>Actions</th>
-        </tr></thead>
-        <tbody>${personas.map(p => `
+  const res = await api("/api/personas");
+  if (!res.ok) return;
+
+  const container = document.getElementById("persona-list");
+  if (res.data.length === 0) {
+    container.innerHTML = '<p class="hint">No persona entries yet.</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Category</th><th>Content</th><th>Always Active</th><th>Actions</th></tr></thead>
+      <tbody>
+        ${res.data
+          .map(
+            (p) => `
           <tr>
-            <td><strong>${p.category}</strong></td>
-            <td title="${p.content.replace(/"/g, '&quot;')}">${truncate(p.content, 120)}</td>
-            <td>${boolBadge(p.is_always_active)}</td>
+            <td>${p.category}</td>
+            <td title="${p.content.replace(/"/g, "&quot;")}">${truncate(p.content, 60)}</td>
+            <td>${badge(String(p.is_always_active))}</td>
             <td class="actions">
               <button class="btn-sm btn-secondary" onclick="editPersona('${p.id}')">✏️</button>
-              <button class="btn-sm btn-danger" onclick="deletePersonaRow('${p.id}', '${p.category}')">🗑️</button>
+              <button class="btn-sm btn-danger" onclick="deletePersona('${p.id}')">🗑️</button>
             </td>
-          </tr>
-        `).join("")}</tbody>
-      </table>`;
-  } catch (err) { toast(err.message, "error"); }
+          </tr>`,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
 }
 
-// Store personas data for editing
-let _personasCache = [];
-
-async function editPersona(id) {
-  try {
-    const persona = await api("GET", `/api/personas/${id}`);
-    $("persona-form-id").value = id;
-    $("persona-category").value = persona.category;
-    $("persona-content").value = persona.content;
-    $("persona-always-active").checked = persona.is_always_active;
-    $("persona-form").style.display = "block";
-  } catch (err) { toast(err.message, "error"); }
-}
-window.editPersona = editPersona;
-
-async function deletePersonaRow(id, category) {
-  if (!confirm(`Delete persona "${category}"?`)) return;
-  try {
-    await api("DELETE", `/api/personas/${id}`);
-    toast("Persona deleted", "success");
-    loadPersonas();
-  } catch (err) { toast(err.message, "error"); }
-}
-window.deletePersonaRow = deletePersonaRow;
-
-$("btn-new-persona").addEventListener("click", () => {
-  $("persona-form-id").value = "";
-  $("persona-category").value = "";
-  $("persona-content").value = "";
-  $("persona-always-active").checked = false;
-  $("persona-form").style.display = "block";
+document.getElementById("btn-new-persona").addEventListener("click", () => {
+  document.getElementById("persona-form-id").value = "";
+  document.getElementById("persona-category").value = "";
+  document.getElementById("persona-content").value = "";
+  document.getElementById("persona-always-active").checked = false;
+  document.getElementById("persona-form").style.display = "block";
 });
 
-$("btn-cancel-persona").addEventListener("click", () => {
-  $("persona-form").style.display = "none";
+document.getElementById("btn-cancel-persona").addEventListener("click", () => {
+  document.getElementById("persona-form").style.display = "none";
 });
 
-$("btn-save-persona").addEventListener("click", async () => {
-  const id = $("persona-form-id").value;
-  const data = {
-    category: $("persona-category").value,
-    content: $("persona-content").value,
-    is_always_active: $("persona-always-active").checked,
+document.getElementById("btn-save-persona").addEventListener("click", async () => {
+  const id = document.getElementById("persona-form-id").value;
+  const body = {
+    category: document.getElementById("persona-category").value,
+    content: document.getElementById("persona-content").value,
+    is_always_active: document.getElementById("persona-always-active").checked,
   };
-  try {
-    if (id) {
-      await api("PUT", `/api/personas/${id}`, data);
-      toast("Persona updated", "success");
-    } else {
-      await api("POST", "/api/personas", data);
-      toast("Persona created", "success");
-    }
-    $("persona-form").style.display = "none";
+
+  const res = id
+    ? await api(`/api/personas/${id}`, { method: "PUT", body: JSON.stringify(body) })
+    : await api("/api/personas", { method: "POST", body: JSON.stringify(body) });
+
+  if (res.ok) {
+    toast(id ? "Persona updated" : "Persona created", "success");
+    document.getElementById("persona-form").style.display = "none";
     loadPersonas();
-  } catch (err) { toast(err.message, "error"); }
+  } else {
+    toast(res.error || "Failed", "error");
+  }
 });
 
-// Workspace files
-async function loadWorkspaceFiles() {
-  try {
-    const files = await api("GET", "/api/workspace-files");
-    const container = $("workspace-files");
-    if (files.length === 0) {
-      container.innerHTML = '<span class="hint">No .md files found in workspace</span>';
-      return;
-    }
-    container.innerHTML = files.map(f =>
-      `<button class="workspace-file-btn" onclick="loadWorkspaceFile('${f.name}')">${f.name}</button>`
-    ).join("");
-  } catch { /* workspace might not be configured */ }
-}
-window.loadWorkspaceFile = async function(filename) {
-  try {
-    const file = await api("GET", `/api/workspace-files/${filename}`);
-    $("workspace-content").textContent = file.content;
-    $("workspace-content").style.display = "block";
-  } catch (err) { toast(err.message, "error"); }
+window.editPersona = async function (id) {
+  const res = await api(`/api/personas/${id}`);
+  if (!res.ok) return toast("Not found", "error");
+  const p = res.data;
+  document.getElementById("persona-form-id").value = p.id;
+  document.getElementById("persona-category").value = p.category;
+  document.getElementById("persona-content").value = p.content;
+  document.getElementById("persona-always-active").checked = p.is_always_active;
+  document.getElementById("persona-form").style.display = "block";
+};
+
+window.deletePersona = async function (id) {
+  if (!confirm("Delete this persona entry?")) return;
+  const res = await api(`/api/personas/${id}`, { method: "DELETE" });
+  if (res.ok) {
+    toast("Deleted", "success");
+    loadPersonas();
+  } else {
+    toast(res.error || "Failed", "error");
+  }
 };
 
 // =============================================================================
@@ -212,532 +184,865 @@ window.loadWorkspaceFile = async function(filename) {
 // =============================================================================
 
 async function loadMemories() {
-  const search = $("memory-search").value;
-  const tier = $("memory-tier-filter").value;
-  const archived = $("memory-archived-filter").value;
+  const search = document.getElementById("memory-search").value;
+  const tier = document.getElementById("memory-tier-filter").value;
+  const archived = document.getElementById("memory-archived-filter").value;
 
-  let params = `limit=${PAGE_SIZE}&offset=${memoryPage * PAGE_SIZE}`;
-  if (search) params += `&search=${encodeURIComponent(search)}`;
-  if (tier) params += `&tier=${tier}`;
-  if (archived) params += `&archived=${archived}`;
+  const params = new URLSearchParams({
+    limit: memoryPage.limit,
+    offset: memoryPage.offset,
+  });
+  if (search) params.set("search", search);
+  if (tier) params.set("tier", tier);
+  if (archived) params.set("archived", archived);
 
-  try {
-    const result = await api("GET", `/api/memories?${params}`);
-    const container = $("memory-list");
-    const memories = result.memories;
-    if (memories.length === 0) {
-      container.innerHTML = '<p class="hint">No memories found.</p>';
-      $("memory-pagination").innerHTML = "";
-      return;
-    }
-    container.innerHTML = `
-      <table class="data-table">
-        <thead><tr>
-          <th>Content</th><th>Category</th><th>Tier</th><th>Access</th><th>Actions</th>
-        </tr></thead>
-        <tbody>${memories.map(m => `
+  const res = await api(`/api/memories?${params}`);
+  if (!res.ok) return;
+
+  memoryPage.total = res.data.length;
+  const container = document.getElementById("memory-list");
+
+  if (res.data.length === 0) {
+    container.innerHTML = '<p class="hint">No memories found.</p>';
+    document.getElementById("memory-pagination").innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Content</th><th>Category</th><th>Tier</th><th>Score</th><th>Actions</th></tr></thead>
+      <tbody>
+        ${res.data
+          .map(
+            (m) => `
           <tr>
-            <td title="${(m.content || '').replace(/"/g, '&quot;')}">${truncate(m.content, 100)}</td>
+            <td title="${(m.content || "").replace(/"/g, "&quot;")}">${truncate(m.content, 60)}</td>
             <td>${m.category || "—"}</td>
-            <td>${tierBadge(m.tier)}</td>
-            <td>${m.access_count || 0}</td>
+            <td>${badge(m.tier || "daily")}</td>
+            <td>${m.usefulness_score != null ? m.usefulness_score.toFixed(1) : "—"}</td>
             <td class="actions">
               <button class="btn-sm btn-secondary" onclick="editMemory('${m.id}')">✏️</button>
-              <button class="btn-sm btn-danger" onclick="archiveMemory('${m.id}')">🗑️</button>
+              <button class="btn-sm btn-danger" onclick="deleteMemory('${m.id}')">🗑️</button>
             </td>
-          </tr>
-        `).join("")}</tbody>
-      </table>`;
+          </tr>`,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
 
-    // Pagination
-    const totalPages = Math.ceil(result.total / PAGE_SIZE);
-    $("memory-pagination").innerHTML = totalPages > 1
-      ? `<button class="btn-sm btn-secondary" ${memoryPage === 0 ? "disabled" : ""} onclick="memPrev()">← Prev</button>
-         <span>Page ${memoryPage + 1} of ${totalPages} (${result.total} total)</span>
-         <button class="btn-sm btn-secondary" ${memoryPage >= totalPages - 1 ? "disabled" : ""} onclick="memNext()">Next →</button>`
-      : `<span>${result.total} memories</span>`;
-  } catch (err) { toast(err.message, "error"); }
+  renderPagination();
 }
 
-window.memPrev = () => { if (memoryPage > 0) { memoryPage--; loadMemories(); } };
-window.memNext = () => { memoryPage++; loadMemories(); };
+function renderPagination() {
+  const el = document.getElementById("memory-pagination");
+  const page = Math.floor(memoryPage.offset / memoryPage.limit) + 1;
+  el.innerHTML = `
+    <button class="btn-sm btn-secondary" onclick="prevMemoryPage()" ${memoryPage.offset === 0 ? "disabled" : ""}>← Prev</button>
+    <span>Page ${page}</span>
+    <button class="btn-sm btn-secondary" onclick="nextMemoryPage()" ${memoryPage.total < memoryPage.limit ? "disabled" : ""}>Next →</button>
+  `;
+}
 
-window.editMemory = async function(id) {
-  try {
-    const mem = await api("GET", `/api/memories/${id}`);
-    if (!mem) return toast("Memory not found", "error");
-    $("memory-form-id").value = id;
-    $("memory-content").value = mem.content;
-    $("memory-category").value = mem.category || "";
-    $("memory-tier").value = mem.tier || "daily";
-    $("memory-form").style.display = "block";
-  } catch (err) { toast(err.message, "error"); }
+window.prevMemoryPage = function () {
+  memoryPage.offset = Math.max(0, memoryPage.offset - memoryPage.limit);
+  loadMemories();
 };
 
-window.archiveMemory = async function(id) {
-  if (!confirm("Archive this memory?")) return;
-  try {
-    await api("DELETE", `/api/memories/${id}`);
-    toast("Memory archived", "success");
-    loadMemories();
-  } catch (err) { toast(err.message, "error"); }
+window.nextMemoryPage = function () {
+  memoryPage.offset += memoryPage.limit;
+  loadMemories();
 };
 
-$("btn-new-memory").addEventListener("click", () => {
-  $("memory-form-id").value = "";
-  $("memory-content").value = "";
-  $("memory-category").value = "";
-  $("memory-tier").value = "daily";
-  $("memory-form").style.display = "block";
-  $("import-form").style.display = "none";
-});
-
-$("btn-cancel-memory").addEventListener("click", () => {
-  $("memory-form").style.display = "none";
-});
-
-$("btn-save-memory").addEventListener("click", async () => {
-  const id = $("memory-form-id").value;
-  const data = {
-    content: $("memory-content").value,
-    category: $("memory-category").value || undefined,
-    tier: $("memory-tier").value,
-  };
-  try {
-    if (id) {
-      await api("PUT", `/api/memories/${id}`, data);
-      toast("Memory updated", "success");
-    } else {
-      await api("POST", "/api/memories", data);
-      toast("Memory created", "success");
-    }
-    $("memory-form").style.display = "none";
+document.getElementById("memory-search").addEventListener(
+  "input",
+  debounce(() => {
+    memoryPage.offset = 0;
     loadMemories();
-  } catch (err) { toast(err.message, "error"); }
+  }, 300),
+);
+
+document.getElementById("memory-tier-filter").addEventListener("change", () => {
+  memoryPage.offset = 0;
+  loadMemories();
 });
 
-// Import
-$("btn-import-memory").addEventListener("click", () => {
-  $("import-form").style.display = "block";
-  $("memory-form").style.display = "none";
+document.getElementById("memory-archived-filter").addEventListener("change", () => {
+  memoryPage.offset = 0;
+  loadMemories();
 });
-$("btn-cancel-import").addEventListener("click", () => {
-  $("import-form").style.display = "none";
-});
-$("btn-run-import").addEventListener("click", async () => {
-  const content = $("import-content").value;
-  const filename = $("import-filename").value;
-  if (!content.trim()) return toast("No content to import", "error");
-  try {
-    const result = await api("POST", "/api/memories/import", {
-      content, source_filename: filename || undefined,
-    });
-    toast(`Imported ${result.imported} chunks`, "success");
-    $("import-form").style.display = "none";
-    loadMemories();
-  } catch (err) { toast(err.message, "error"); }
-});
-
-// Filter listeners
-$("memory-search").addEventListener("input", debounce(() => { memoryPage = 0; loadMemories(); }, 300));
-$("memory-tier-filter").addEventListener("change", () => { memoryPage = 0; loadMemories(); });
-$("memory-archived-filter").addEventListener("change", () => { memoryPage = 0; loadMemories(); });
 
 function debounce(fn, ms) {
-  let timer;
-  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
 }
+
+document.getElementById("btn-new-memory").addEventListener("click", () => {
+  document.getElementById("memory-form-id").value = "";
+  document.getElementById("memory-content").value = "";
+  document.getElementById("memory-category").value = "";
+  document.getElementById("memory-tier").value = "daily";
+  document.getElementById("memory-edge-list").innerHTML = "";
+  document.getElementById("memory-form").style.display = "block";
+});
+
+document.getElementById("btn-cancel-memory").addEventListener("click", () => {
+  document.getElementById("memory-form").style.display = "none";
+});
+
+document.getElementById("btn-save-memory").addEventListener("click", async () => {
+  const id = document.getElementById("memory-form-id").value;
+  const body = {
+    content: document.getElementById("memory-content").value,
+    category: document.getElementById("memory-category").value || undefined,
+    tier: document.getElementById("memory-tier").value,
+  };
+
+  const res = id
+    ? await api(`/api/memories/${id}`, { method: "PUT", body: JSON.stringify(body) })
+    : await api("/api/memories", { method: "POST", body: JSON.stringify(body) });
+
+  if (res.ok) {
+    toast(id ? "Memory updated" : "Memory created", "success");
+    document.getElementById("memory-form").style.display = "none";
+    loadMemories();
+  } else {
+    toast(res.error || "Failed", "error");
+  }
+});
+
+window.editMemory = async function (id) {
+  const res = await api(`/api/memories/${id}`);
+  if (!res.ok) return toast("Not found", "error");
+  const m = res.data;
+  document.getElementById("memory-form-id").value = m.id;
+  document.getElementById("memory-content").value = m.content;
+  document.getElementById("memory-category").value = m.category || "";
+  document.getElementById("memory-tier").value = m.tier || "daily";
+  document.getElementById("memory-form").style.display = "block";
+  loadMemoryEdges(id);
+};
+
+window.deleteMemory = async function (id) {
+  if (!confirm("Archive this memory?")) return;
+  const res = await api(`/api/memories/${id}`, { method: "DELETE" });
+  if (res.ok) {
+    toast("Archived", "success");
+    loadMemories();
+  } else {
+    toast(res.error || "Failed", "error");
+  }
+};
+
+// =============================================================================
+// MEMORY LINKING
+// =============================================================================
+
+async function loadMemoryEdges(memoryId) {
+  const res = await api(`/api/memories/${memoryId}/edges`);
+  const container = document.getElementById("memory-edge-list");
+
+  if (!res.ok || !res.data.length) {
+    container.innerHTML = '<p class="hint" style="font-size:0.8rem;">No links yet.</p>';
+    return;
+  }
+
+  container.innerHTML = res.data
+    .map((e) => {
+      const isSrc = e.source_memory_id === memoryId;
+      const targetLabel = isSrc
+        ? truncate(e.target_content || e.target_persona_category || "Unknown", 50)
+        : truncate(e.source_content || e.source_persona_category || "Unknown", 50);
+      const targetType = (isSrc ? (e.target_persona_id ? "persona" : "memory") : (e.source_persona_id ? "persona" : "memory"));
+      return `
+        <div class="edge-item">
+          <span class="edge-rel">${e.relationship_type}</span>
+          <span class="edge-type-badge">${targetType}</span>
+          <span class="edge-target">${isSrc ? "→" : "←"} ${targetLabel}</span>
+          <button class="btn-sm btn-danger" onclick="deleteEdge('${e.id}', '${memoryId}')">✕</button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+window.deleteEdge = async function (edgeId, memoryId) {
+  const res = await api(`/api/edges/${edgeId}`, { method: "DELETE" });
+  if (res.ok) {
+    toast("Link removed", "success");
+    loadMemoryEdges(memoryId);
+  } else {
+    toast(res.error || "Failed", "error");
+  }
+};
+
+// Link target search
+const linkSearchInput = document.getElementById("link-target-search");
+const linkSearchResults = document.getElementById("link-target-results");
+
+linkSearchInput.addEventListener(
+  "input",
+  debounce(async () => {
+    const q = linkSearchInput.value.trim().toLowerCase();
+    if (q.length < 2) {
+      linkSearchResults.style.display = "none";
+      return;
+    }
+
+    // Search both memories and personas
+    const [memRes, perRes] = await Promise.all([
+      api(`/api/memories?search=${encodeURIComponent(q)}&limit=10`),
+      api("/api/personas"),
+    ]);
+
+    let results = [];
+    if (memRes.ok) {
+      results.push(
+        ...memRes.data.map((m) => ({
+          id: m.id,
+          type: "memory",
+          label: truncate(m.content, 60),
+        })),
+      );
+    }
+    if (perRes.ok) {
+      results.push(
+        ...perRes.data
+          .filter((p) => p.category.toLowerCase().includes(q) || p.content.toLowerCase().includes(q))
+          .map((p) => ({ id: p.id, type: "persona", label: `[${p.category}] ${truncate(p.content, 40)}` })),
+      );
+    }
+
+    if (results.length === 0) {
+      linkSearchResults.style.display = "none";
+      return;
+    }
+
+    linkSearchResults.innerHTML = results
+      .map(
+        (r) => `
+      <div class="link-search-item" data-id="${r.id}" data-type="${r.type}">
+        <span class="node-type ${r.type}">${r.type}</span>
+        <span>${r.label}</span>
+      </div>
+    `,
+      )
+      .join("");
+    linkSearchResults.style.display = "block";
+  }, 300),
+);
+
+linkSearchResults.addEventListener("click", (e) => {
+  const item = e.target.closest(".link-search-item");
+  if (!item) return;
+  document.getElementById("link-target-id").value = item.dataset.id;
+  document.getElementById("link-target-type").value = item.dataset.type;
+  linkSearchInput.value = item.querySelector("span:last-child").textContent;
+  linkSearchResults.style.display = "none";
+});
+
+document.getElementById("btn-add-link").addEventListener("click", async () => {
+  const memoryId = document.getElementById("memory-form-id").value;
+  const targetId = document.getElementById("link-target-id").value;
+  const targetType = document.getElementById("link-target-type").value;
+  const relationship = document.getElementById("link-relationship").value.trim();
+
+  if (!memoryId || !targetId || !relationship) {
+    return toast("Select a target and enter a relationship type", "error");
+  }
+
+  const body = { relationship_type: relationship };
+  if (targetType === "persona") {
+    body.source_memory_id = memoryId;
+    body.target_persona_id = targetId;
+  } else {
+    body.source_memory_id = memoryId;
+    body.target_memory_id = targetId;
+  }
+
+  const res = await api("/api/edges", { method: "POST", body: JSON.stringify(body) });
+  if (res.ok) {
+    toast("Link created", "success");
+    linkSearchInput.value = "";
+    document.getElementById("link-target-id").value = "";
+    document.getElementById("link-relationship").value = "";
+    loadMemoryEdges(memoryId);
+  } else {
+    toast(res.error || "Link failed", "error");
+  }
+});
+
+// =============================================================================
+// IMPORT (paste markdown)
+// =============================================================================
+
+document.getElementById("btn-import-memory").addEventListener("click", () => {
+  document.getElementById("import-form").style.display =
+    document.getElementById("import-form").style.display === "none" ? "block" : "none";
+});
+
+document.getElementById("btn-cancel-import").addEventListener("click", () => {
+  document.getElementById("import-form").style.display = "none";
+});
+
+document.getElementById("btn-run-import").addEventListener("click", async () => {
+  const content = document.getElementById("import-content").value;
+  const source_filename = document.getElementById("import-filename").value || undefined;
+
+  if (!content.trim()) return toast("Paste some content first", "error");
+
+  const res = await api("/api/memories/import", {
+    method: "POST",
+    body: JSON.stringify({ content, source_filename }),
+  });
+
+  if (res.ok) {
+    toast(`Imported ${res.data.imported} memories`, "success");
+    document.getElementById("import-form").style.display = "none";
+    document.getElementById("import-content").value = "";
+    loadMemories();
+  } else {
+    toast(res.error || "Import failed", "error");
+  }
+});
+
+// =============================================================================
+// WORKSPACE FILES
+// =============================================================================
+
+async function loadWorkspaceFiles() {
+  const res = await api("/api/workspace-files");
+  const container = document.getElementById("workspace-files");
+
+  if (!res.ok || !res.data.length) {
+    container.innerHTML = '<p class="hint">No .md files in workspace.</p>';
+    return;
+  }
+
+  container.innerHTML = res.data
+    .map(
+      (f) => `
+    <div style="display:inline-flex;flex-direction:column;gap:0.15rem;">
+      <button class="workspace-file-btn" onclick="viewWorkspaceFile('${f.name}')">${f.name}</button>
+      <div class="workspace-import-actions">
+        <button class="workspace-import-btn" onclick="importWorkspaceTo('${f.name}', 'persona')" title="Import as persona entries via LLM">→ Persona</button>
+        <button class="workspace-import-btn" onclick="importWorkspaceTo('${f.name}', 'memory')" title="Import as memory facts via LLM">→ Memory</button>
+      </div>
+    </div>
+  `,
+    )
+    .join("");
+}
+
+window.viewWorkspaceFile = async function (filename) {
+  const res = await api(`/api/workspace-files/${encodeURIComponent(filename)}`);
+  if (!res.ok) return toast(res.error || "Failed to read", "error");
+  const el = document.getElementById("workspace-content");
+  el.textContent = res.data.content;
+  el.style.display = "block";
+};
+
+window.importWorkspaceTo = async function (filename, target) {
+  const tierPrompt = target === "memory" ? " (tier: stable)" : "";
+  if (!confirm(`Import "${filename}" as ${target} entries${tierPrompt}?\n\nThis uses LLM to semantically chunk the file.`)) return;
+
+  toast(`Importing ${filename} as ${target}… (LLM processing)`, "info");
+
+  const res = await api("/api/workspace-import", {
+    method: "POST",
+    body: JSON.stringify({ filename, target }),
+  });
+
+  if (res.ok) {
+    toast(`Imported ${res.data.imported}/${res.data.total} ${target} entries from ${filename}`, "success");
+    if (target === "persona") loadPersonas();
+    else loadMemories();
+  } else {
+    toast(res.error || "Import failed", "error");
+  }
+};
 
 // =============================================================================
 // KNOWLEDGE GRAPH (D3.js)
 // =============================================================================
 
-let graphSimulation = null;
-let graphZoom = null;
-let graphLabelsVisible = true;
+const TIER_COLORS = {
+  permanent: "#4ade80",
+  stable: "#4f9cf7",
+  daily: "#f7b955",
+  session: "#a78bfa",
+  volatile: "#f7555a",
+};
+
+const PERSONA_COLOR = "#f7b955";
+const MEMORY_DEFAULT_COLOR = "#4f9cf7";
 
 async function loadGraph() {
-  try {
-    const data = await api("GET", "/api/graph");
-    renderGraph(data);
-    $("graph-stats").textContent = `${data.nodes.length} nodes, ${data.edges.length} edges`;
-  } catch (err) { toast(err.message, "error"); }
-}
+  const res = await api("/api/graph");
+  if (!res.ok) return;
 
-function renderGraph(data) {
+  allNodes = res.data.nodes;
+  allEdges = res.data.edges;
+
   const svg = d3.select("#graph-svg");
   svg.selectAll("*").remove();
 
-  const container = $("graph-container");
+  const container = document.getElementById("graph-container");
   const width = container.clientWidth;
   const height = container.clientHeight;
 
-  svg.attr("viewBox", [0, 0, width, height]);
+  svg.attr("width", width).attr("height", height);
 
-  // ── Defs: glow filters + arrowhead markers ──
+  // Defs for arrowheads
   const defs = svg.append("defs");
+  defs
+    .append("marker")
+    .attr("id", "arrowhead")
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 20)
+    .attr("refY", 0)
+    .attr("markerWidth", 6)
+    .attr("markerHeight", 6)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("d", "M0,-5L10,0L0,5")
+    .attr("fill", "#6b7280");
 
-  // Glow filter
-  const glow = defs.append("filter").attr("id", "glow");
-  glow.append("feGaussianBlur").attr("stdDeviation", "3").attr("result", "color");
-  glow.append("feMerge").selectAll("feMergeNode")
-    .data(["color", "SourceGraphic"])
-    .join("feMergeNode").attr("in", d => d);
+  const g = svg.append("g");
 
-  // Tier colors
-  const tierColor = {
-    permanent: "#4ade80", stable: "#4f9cf7", daily: "#f7b955",
-    session: "#a78bfa", volatile: "#f7555a",
-  };
-
-  // Relationship colors
-  const relColor = {
-    related_to: "#6b7280", elaborates: "#4f9cf7", contradicts: "#f7555a",
-    depends_on: "#f7b955", part_of: "#a78bfa",
-  };
-
-  // Arrowhead markers for each relationship
-  Object.entries(relColor).forEach(([rel, color]) => {
-    defs.append("marker")
-      .attr("id", `arrow-${rel}`)
-      .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 20)
-      .attr("refY", 0)
-      .attr("markerWidth", 6)
-      .attr("markerHeight", 6)
-      .attr("orient", "auto")
-      .append("path")
-      .attr("d", "M0,-5L10,0L0,5")
-      .attr("fill", color)
-      .attr("opacity", 0.6);
+  // Zoom
+  const zoom = d3.zoom().scaleExtent([0.1, 5]).on("zoom", (event) => {
+    g.attr("transform", event.transform);
   });
+  svg.call(zoom);
 
-  // ── Zoom behavior ──
-  const world = svg.append("g").attr("class", "graph-world");
-
-  graphZoom = d3.zoom()
-    .scaleExtent([0.1, 6])
-    .on("zoom", (event) => {
-      world.attr("transform", event.transform);
-    });
-
-  svg.call(graphZoom);
-  // Disable double-click zoom (conflicts with node interaction)
-  svg.on("dblclick.zoom", null);
-
-  // ── Force simulation ──
-  if (graphSimulation) graphSimulation.stop();
-
-  const nodeCount = data.nodes.length;
-  const chargeStrength = nodeCount > 100 ? -60 : nodeCount > 50 ? -80 : -100;
-  const linkDist = nodeCount > 100 ? 80 : 120;
-
-  graphSimulation = d3.forceSimulation(data.nodes)
-    .force("link", d3.forceLink(data.edges).id(d => d.id).distance(linkDist))
-    .force("charge", d3.forceManyBody().strength(chargeStrength))
+  // Force simulation
+  const simulation = d3
+    .forceSimulation(res.data.nodes)
+    .force(
+      "link",
+      d3
+        .forceLink(res.data.edges)
+        .id((d) => d.id)
+        .distance(120),
+    )
+    .force("charge", d3.forceManyBody().strength(-200))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide().radius(d => nodeRadius(d) + 4))
-    .force("x", d3.forceX(width / 2).strength(0.06))
-    .force("y", d3.forceY(height / 2).strength(0.06))
-    .alphaDecay(0.03);
+    .force("collision", d3.forceCollide().radius(30));
 
-  // ── Edges ──
-  const link = world.append("g").attr("class", "graph-edges")
+  // Edges
+  const link = g
+    .append("g")
     .selectAll("line")
-    .data(data.edges)
+    .data(res.data.edges)
     .join("line")
     .attr("class", "graph-edge")
-    .attr("stroke", d => relColor[d.relationship] || "#6b7280")
-    .attr("stroke-width", d => Math.max(0.5, Math.sqrt(d.weight || 1)))
-    .attr("marker-end", d => `url(#arrow-${d.relationship || "related_to"})`);
+    .attr("stroke", (d) => {
+      if (d.sourceType === "persona" || d.targetType === "persona") return PERSONA_COLOR;
+      return "#6b7280";
+    })
+    .attr("stroke-width", (d) => Math.max(1, d.weight))
+    .attr("marker-end", "url(#arrowhead)");
 
   // Edge labels
-  const linkLabel = world.append("g").attr("class", "graph-edge-labels")
+  const edgeLabel = g
+    .append("g")
     .selectAll("text")
-    .data(data.edges)
+    .data(res.data.edges)
     .join("text")
     .attr("class", "graph-edge-label")
-    .text(d => d.relationship || "");
+    .text((d) => d.relationship);
 
-  // ── Nodes ──
-  const node = world.append("g").attr("class", "graph-nodes")
+  // Nodes
+  const node = g
+    .append("g")
     .selectAll("g")
-    .data(data.nodes)
+    .data(res.data.nodes)
     .join("g")
     .attr("class", "graph-node")
-    .call(d3.drag()
-      .on("start", dragStart)
-      .on("drag", dragging)
-      .on("end", dragEnd));
+    .call(d3.drag().on("start", dragStart).on("drag", dragging).on("end", dragEnd));
 
-  // Outer glow ring
-  node.append("circle")
+  // Glow
+  node
+    .append("circle")
     .attr("class", "node-glow")
-    .attr("r", d => nodeRadius(d) + 4)
+    .attr("r", (d) => nodeRadius(d) + 6)
     .attr("fill", "none")
-    .attr("stroke", d => tierColor[d.tier] || "#6b7280")
-    .attr("stroke-width", 2)
-    .attr("stroke-opacity", 0.15)
-    .attr("filter", "url(#glow)");
+    .attr("stroke", (d) => nodeColor(d))
+    .attr("stroke-width", 3)
+    .attr("stroke-opacity", 0);
 
-  // Main circle
-  node.append("circle")
-    .attr("class", "node-circle")
-    .attr("r", d => nodeRadius(d))
-    .attr("fill", d => tierColor[d.tier] || "#6b7280")
-    .attr("stroke", "rgba(255,255,255,0.15)")
-    .attr("stroke-width", 1.5);
+  // Memory nodes = circles, Persona nodes = diamonds
+  node.each(function (d) {
+    const el = d3.select(this);
+    if (d.type === "persona") {
+      const size = 10;
+      el.append("path")
+        .attr("class", "node-diamond")
+        .attr("d", `M0,${-size} L${size},0 L0,${size} L${-size},0 Z`)
+        .attr("fill", PERSONA_COLOR)
+        .attr("stroke", "#0f1117")
+        .attr("stroke-width", 1.5);
+    } else {
+      el.append("circle")
+        .attr("class", "node-circle")
+        .attr("r", nodeRadius(d))
+        .attr("fill", nodeColor(d))
+        .attr("stroke", "#0f1117")
+        .attr("stroke-width", 1.5);
+    }
+  });
 
   // Labels
-  node.append("text")
+  node
+    .append("text")
     .attr("class", "node-label")
-    .text(d => d.label ? d.label.substring(0, 30) : "")
-    .attr("dx", d => nodeRadius(d) + 5)
-    .attr("dy", 4)
-    .style("display", graphLabelsVisible ? "block" : "none");
+    .attr("dy", (d) => nodeRadius(d) + 14)
+    .attr("text-anchor", "middle")
+    .text((d) => truncate(d.label, 20))
+    .style("display", showLabels ? "block" : "none");
 
-  // Click → detail panel
-  node.on("click", (_event, d) => {
-    showGraphDetail(d);
-    // Highlight selected
-    node.selectAll(".node-circle").attr("stroke", "rgba(255,255,255,0.15)").attr("stroke-width", 1.5);
-    d3.select(_event.currentTarget).select(".node-circle").attr("stroke", "#fff").attr("stroke-width", 3);
+  // Click handler
+  node.on("click", (_event, d) => showNodeDetail(d));
+
+  // Shift+drag to link
+  node.on("mousedown", function (event, d) {
+    if (!event.shiftKey) return;
+    event.stopPropagation();
+    const svgEl = document.getElementById("graph-svg");
+    const pt = svgEl.createSVGPoint();
+    pt.x = event.clientX;
+    pt.y = event.clientY;
+    const svgPt = pt.matrixTransform(g.node().getScreenCTM().inverse());
+
+    const line = g
+      .append("line")
+      .attr("class", "graph-link-preview")
+      .attr("x1", svgPt.x)
+      .attr("y1", svgPt.y)
+      .attr("x2", svgPt.x)
+      .attr("y2", svgPt.y);
+
+    shiftLinkState = { sourceNode: d, line };
   });
 
-  // Hover tooltip
-  node.on("mouseenter", function(_event, d) {
-    d3.select(this).select(".node-label").style("display", "block");
-  }).on("mouseleave", function() {
-    if (!graphLabelsVisible) d3.select(this).select(".node-label").style("display", "none");
+  svg.on("mousemove", function (event) {
+    if (!shiftLinkState) return;
+    const pt = this.createSVGPoint();
+    pt.x = event.clientX;
+    pt.y = event.clientY;
+    const svgPt = pt.matrixTransform(g.node().getScreenCTM().inverse());
+    shiftLinkState.line.attr("x2", svgPt.x).attr("y2", svgPt.y);
   });
 
-  // ── Legend ──
-  renderGraphLegend(tierColor);
+  svg.on("mouseup", async function (event) {
+    if (!shiftLinkState) return;
+    shiftLinkState.line.remove();
+    const source = shiftLinkState.sourceNode;
+    shiftLinkState = null;
 
-  // ── Tick ──
-  graphSimulation.on("tick", () => {
+    // Find target node under cursor
+    const target = findNodeAt(event, res.data.nodes, g);
+    if (!target || target.id === source.id) return;
+
+    const relationship = prompt(`Link "${truncate(source.label, 30)}" → "${truncate(target.label, 30)}"\n\nRelationship type:`);
+    if (!relationship) return;
+
+    const body = { relationship_type: relationship };
+    if (source.type === "persona") body.source_persona_id = source.id;
+    else body.source_memory_id = source.id;
+    if (target.type === "persona") body.target_persona_id = target.id;
+    else body.target_memory_id = target.id;
+
+    const linkRes = await api("/api/edges", { method: "POST", body: JSON.stringify(body) });
+    if (linkRes.ok) {
+      toast("Link created", "success");
+      loadGraph();
+    } else {
+      toast(linkRes.error || "Link failed", "error");
+    }
+  });
+
+  // Tick
+  simulation.on("tick", () => {
     link
-      .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-    linkLabel
-      .attr("x", d => (d.source.x + d.target.x) / 2)
-      .attr("y", d => (d.source.y + d.target.y) / 2);
-    node.attr("transform", d => `translate(${d.x},${d.y})`);
+      .attr("x1", (d) => d.source.x)
+      .attr("y1", (d) => d.source.y)
+      .attr("x2", (d) => d.target.x)
+      .attr("y2", (d) => d.target.y);
+
+    edgeLabel
+      .attr("x", (d) => (d.source.x + d.target.x) / 2)
+      .attr("y", (d) => (d.source.y + d.target.y) / 2);
+
+    node.attr("transform", (d) => `translate(${d.x},${d.y})`);
   });
 
-  // Auto-fit after simulation stabilizes
-  graphSimulation.on("end", () => {
-    fitGraphToView(data.nodes, width, height);
-  });
+  // Store
+  graphInstances = { simulation, svg, g, zoom };
+
+  // Legend
+  renderLegend();
+
+  // Stats
+  document.getElementById("graph-stats").textContent =
+    `${res.data.nodes.length} nodes • ${res.data.edges.length} edges — Scroll to zoom • Drag to pan • Click node for details • Shift+drag to link`;
 
   function dragStart(event, d) {
-    if (!event.active) graphSimulation.alphaTarget(0.3).restart();
-    d.fx = d.x; d.fy = d.y;
+    if (event.sourceEvent && event.sourceEvent.shiftKey) return;
+    if (!event.active) simulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
   }
-  function dragging(event, d) { d.fx = event.x; d.fy = event.y; }
+
+  function dragging(event, d) {
+    if (event.sourceEvent && event.sourceEvent.shiftKey) return;
+    d.fx = event.x;
+    d.fy = event.y;
+  }
+
   function dragEnd(event, d) {
-    if (!event.active) graphSimulation.alphaTarget(0);
-    d.fx = null; d.fy = null;
+    if (!event.active) simulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
   }
+}
+
+function findNodeAt(event, nodes, gGroup) {
+  const svgEl = document.getElementById("graph-svg");
+  const pt = svgEl.createSVGPoint();
+  pt.x = event.clientX;
+  pt.y = event.clientY;
+  const svgPt = pt.matrixTransform(gGroup.node().getScreenCTM().inverse());
+
+  let closest = null;
+  let minDist = Infinity;
+  for (const n of nodes) {
+    const dx = n.x - svgPt.x;
+    const dy = n.y - svgPt.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 20 && dist < minDist) {
+      minDist = dist;
+      closest = n;
+    }
+  }
+  return closest;
 }
 
 function nodeRadius(d) {
-  return Math.max(5, Math.min(14, 4 + Math.sqrt(d.accessCount || 1) * 2));
+  if (d.type === "persona") return 10;
+  const base = 6;
+  return Math.min(base + (d.accessCount || 0) * 0.5, 18);
 }
 
-function fitGraphToView(nodes, width, height) {
-  if (!nodes || nodes.length === 0 || !graphZoom) return;
-  const svg = d3.select("#graph-svg");
-
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  nodes.forEach(d => {
-    if (d.x < minX) minX = d.x;
-    if (d.x > maxX) maxX = d.x;
-    if (d.y < minY) minY = d.y;
-    if (d.y > maxY) maxY = d.y;
-  });
-
-  const padding = 60;
-  const graphWidth = maxX - minX + padding * 2;
-  const graphHeight = maxY - minY + padding * 2;
-  const scale = Math.min(width / graphWidth, height / graphHeight, 2);
-  const tx = width / 2 - (minX + maxX) / 2 * scale;
-  const ty = height / 2 - (minY + maxY) / 2 * scale;
-
-  svg.transition().duration(500)
-    .call(graphZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+function nodeColor(d) {
+  if (d.type === "persona") return PERSONA_COLOR;
+  return TIER_COLORS[d.tier] || MEMORY_DEFAULT_COLOR;
 }
 
-function renderGraphLegend(tierColor) {
-  const legendContainer = $("graph-legend");
-  if (!legendContainer) return;
-  legendContainer.innerHTML = Object.entries(tierColor).map(([tier, color]) =>
-    `<span class="legend-item"><span class="legend-dot" style="background:${color}"></span>${tier}</span>`
-  ).join("");
+function renderLegend() {
+  const legend = document.getElementById("graph-legend");
+  const items = [
+    ...Object.entries(TIER_COLORS).map(([tier, color]) => `<div class="legend-item"><span class="legend-dot" style="background:${color}"></span>${tier}</div>`),
+    `<div class="legend-item"><span class="legend-diamond" style="background:${PERSONA_COLOR}"></span>persona</div>`,
+  ];
+  legend.innerHTML = items.join("");
 }
 
-function showGraphDetail(d) {
-  const panel = $("graph-detail");
-  if (!panel) return;
+function showNodeDetail(d) {
+  const panel = document.getElementById("graph-detail");
   panel.style.display = "block";
+
+  const typeLabel = d.type === "persona" ? "🎭 Persona Trait" : "🧠 Memory";
   panel.innerHTML = `
     <div class="detail-header">
-      <span class="badge badge-${d.tier || 'daily'}">${d.tier || "daily"}</span>
+      <strong>${typeLabel}</strong>
       <span class="detail-category">${d.category || "uncategorized"}</span>
-      <button class="btn-sm btn-secondary" onclick="this.closest('.graph-detail-panel').style.display='none'">✕</button>
+      ${badge(d.tier || "—")}
+      <span class="detail-id">${d.id.substring(0, 8)}</span>
+      <button class="btn-sm btn-secondary" onclick="document.getElementById('graph-detail').style.display='none'">✕</button>
     </div>
-    <p class="detail-content">${d.label || "—"}</p>
+    <div class="detail-content">${d.label}</div>
     <div class="detail-stats">
-      <span>Access: <strong>${d.accessCount || 0}</strong></span>
-      <span>Score: <strong>${(d.score || 0).toFixed(2)}</strong></span>
-      <span class="detail-id">${d.id}</span>
+      <span>Accesses: ${d.accessCount || 0}</span>
+      <span>Score: ${d.score != null ? d.score.toFixed(1) : "—"}</span>
+      ${d.isAlwaysActive ? "<span>Always Active ✅</span>" : ""}
     </div>
   `;
 }
 
-// Controls
-$("btn-refresh-graph").addEventListener("click", loadGraph);
-
-$("btn-fit-graph").addEventListener("click", () => {
-  if (!graphSimulation) return;
-  const container = $("graph-container");
-  const nodes = graphSimulation.nodes();
-  fitGraphToView(nodes, container.clientWidth, container.clientHeight);
+// Graph controls
+document.getElementById("btn-fit-graph").addEventListener("click", () => {
+  if (!graphInstances.svg || !graphInstances.zoom) return;
+  graphInstances.svg
+    .transition()
+    .duration(500)
+    .call(graphInstances.zoom.transform, d3.zoomIdentity);
 });
 
-$("btn-toggle-labels").addEventListener("click", () => {
-  graphLabelsVisible = !graphLabelsVisible;
-  d3.selectAll(".node-label").style("display", graphLabelsVisible ? "block" : "none");
-  $("btn-toggle-labels").textContent = graphLabelsVisible ? "🏷️ Labels On" : "🏷️ Labels Off";
+document.getElementById("btn-toggle-labels").addEventListener("click", () => {
+  showLabels = !showLabels;
+  d3.selectAll(".node-label").style("display", showLabels ? "block" : "none");
+  document.getElementById("btn-toggle-labels").textContent = showLabels ? "🏷️ Labels On" : "🏷️ Labels Off";
 });
 
+document.getElementById("btn-refresh-graph").addEventListener("click", () => loadGraph());
 
 // =============================================================================
 // SCRIPTS
 // =============================================================================
 
-$("btn-run-sleep").addEventListener("click", async () => {
-  const status = $("sleep-status");
-  status.textContent = "Running...";
-  status.className = "script-status running";
-  try {
-    await api("POST", "/api/scripts/sleep", { agentId: currentAgent });
-    status.textContent = "Sleep cycle started! Check server logs for progress.";
-    status.className = "script-status success";
-  } catch (err) {
-    status.textContent = `Error: ${err.message}`;
-    status.className = "script-status error";
+document.getElementById("btn-run-sleep").addEventListener("click", async () => {
+  const statusEl = document.getElementById("sleep-status");
+  statusEl.textContent = "Running sleep cycle…";
+  statusEl.className = "script-status running";
+
+  const res = await api("/api/scripts/sleep", { method: "POST", body: JSON.stringify({}) });
+
+  if (res.ok) {
+    statusEl.textContent = "✅ " + (res.data?.message || "Complete");
+    statusEl.className = "script-status success";
+  } else {
+    statusEl.textContent = "❌ " + (res.error || "Failed");
+    statusEl.className = "script-status error";
   }
 });
 
-$("btn-run-persona-import").addEventListener("click", async () => {
-  const file = $("persona-import-file").value;
-  if (!file.trim()) return toast("Enter a file path", "error");
-  const status = $("persona-import-status");
-  status.textContent = "Running...";
-  status.className = "script-status running";
-  try {
-    await api("POST", "/api/scripts/persona-import", { agentId: currentAgent, file });
-    status.textContent = "Persona import started! Check server logs for progress.";
-    status.className = "script-status success";
-  } catch (err) {
-    status.textContent = `Error: ${err.message}`;
-    status.className = "script-status error";
+document.getElementById("btn-run-persona-import").addEventListener("click", async () => {
+  const file = document.getElementById("persona-import-file").value;
+  if (!file) return toast("Enter a file path", "error");
+
+  const statusEl = document.getElementById("persona-import-status");
+  statusEl.textContent = "Importing…";
+  statusEl.className = "script-status running";
+
+  const res = await api("/api/scripts/persona-import", {
+    method: "POST",
+    body: JSON.stringify({ file }),
+  });
+
+  if (res.ok) {
+    statusEl.textContent = "✅ " + (res.data?.message || "Done");
+    statusEl.className = "script-status success";
+  } else {
+    statusEl.textContent = "❌ " + (res.error || "Failed");
+    statusEl.className = "script-status error";
   }
 });
 
 // =============================================================================
-// CONFIGURATION
+// CONFIG
 // =============================================================================
 
-async function loadConfig() {
-  try {
-    const config = await api("GET", "/api/config");
-    
-    // RAG
-    $("cfg-rag-semantic-limit").value = config.rag.semanticLimit;
-    $("cfg-rag-total-limit").value = config.rag.totalLimit;
-    $("cfg-rag-linked-similarity").value = config.rag.linkedSimilarity;
+const CONFIG_MAP = [
+  { id: "cfg-rag-semantic-limit", path: "rag.semanticLimit", type: "number" },
+  { id: "cfg-rag-total-limit", path: "rag.totalLimit", type: "number" },
+  { id: "cfg-rag-linked-similarity", path: "rag.linkedSimilarity", type: "number" },
+  { id: "cfg-rag-max-traversal-depth", path: "rag.maxTraversalDepth", type: "number" },
+  { id: "cfg-persona-situational-limit", path: "persona.situationalLimit", type: "number" },
+  { id: "cfg-prompt-memory", path: "prompts.memoryRules", type: "text" },
+  { id: "cfg-prompt-persona", path: "prompts.personaRules", type: "text" },
+  { id: "cfg-prompt-heartbeat", path: "prompts.heartbeatRules", type: "text" },
+  { id: "cfg-prompt-heartbeat-path", path: "prompts.heartbeatFilePath", type: "text" },
+  { id: "cfg-sleep-dedup-threshold", path: "sleep.dedupSimilarityThreshold", type: "number" },
+  { id: "cfg-sleep-low-value-age", path: "sleep.lowValueAgeDays", type: "number" },
+  { id: "cfg-sleep-link-min", path: "sleep.linkMinSimilarity", type: "number" },
+  { id: "cfg-sleep-link-max", path: "sleep.linkMaxSimilarity", type: "number" },
+  { id: "cfg-sleep-episodic-batch", path: "sleep.episodicBatchLimit", type: "number" },
+  { id: "cfg-sleep-dedup-scan", path: "sleep.duplicateScanLimit", type: "number" },
+  { id: "cfg-sleep-link-candidates", path: "sleep.linkCandidatesPerMemory", type: "number" },
+  { id: "cfg-sleep-link-batch", path: "sleep.linkBatchSize", type: "number" },
+  { id: "cfg-sleep-link-scan", path: "sleep.linkScanLimit", type: "number" },
+  { id: "cfg-sleep-protected-tiers", path: "sleep.lowValueProtectedTiers", type: "csv" },
+  { id: "cfg-dedup-cache", path: "dedup.maxCacheSize", type: "number" },
+];
 
-    // Persona
-    $("cfg-persona-situational-limit").value = config.persona.situationalLimit;
-
-    // Prompts
-    $("cfg-prompt-memory").value = config.prompts.memoryRules;
-    $("cfg-prompt-persona").value = config.prompts.personaRules;
-    $("cfg-prompt-heartbeat").value = config.prompts.heartbeatRules;
-    $("cfg-prompt-heartbeat-path").value = config.prompts.heartbeatFilePath;
-
-    // Sleep
-    $("cfg-sleep-dedup-threshold").value = config.sleep.duplicateSimilarityThreshold;
-    $("cfg-sleep-low-value-age").value = config.sleep.lowValueAgeDays;
-    $("cfg-sleep-link-min").value = config.sleep.linkSimilarityMin;
-    $("cfg-sleep-link-max").value = config.sleep.linkSimilarityMax;
-
-    // Technical
-    $("cfg-dedup-cache").value = config.dedup.maxCacheSize;
-
-  } catch (err) { toast(err.message, "error"); }
+function getConfigValue(cfg, path) {
+  return path.split(".").reduce((o, k) => o?.[k], cfg);
 }
 
-$("btn-save-config").addEventListener("click", async () => {
-  const data = {
-    rag: {
-      semanticLimit: parseInt($("cfg-rag-semantic-limit").value),
-      totalLimit: parseInt($("cfg-rag-total-limit").value),
-      linkedSimilarity: parseFloat($("cfg-rag-linked-similarity").value)
-    },
-    persona: {
-      situationalLimit: parseInt($("cfg-persona-situational-limit").value)
-    },
-    prompts: {
-      memoryRules: $("cfg-prompt-memory").value,
-      personaRules: $("cfg-prompt-persona").value,
-      heartbeatRules: $("cfg-prompt-heartbeat").value,
-      heartbeatFilePath: $("cfg-prompt-heartbeat-path").value
-    },
-    sleep: {
-      // Keep other sleep settings at their defaults if not in UI
-      episodicBatchLimit: 100,
-      duplicateScanLimit: 200,
-      linkCandidatesPerMemory: 5,
-      linkBatchSize: 20,
-      linkScanLimit: 50,
-      lowValueProtectedTiers: ['permanent', 'stable'],
-      
-      duplicateSimilarityThreshold: parseFloat($("cfg-sleep-dedup-threshold").value),
-      lowValueAgeDays: parseInt($("cfg-sleep-low-value-age").value),
-      linkSimilarityMin: parseFloat($("cfg-sleep-link-min").value),
-      linkSimilarityMax: parseFloat($("cfg-sleep-link-max").value),
-    },
-    dedup: {
-      maxCacheSize: parseInt($("cfg-dedup-cache").value)
-    }
-  };
+function setConfigValue(cfg, path, value) {
+  const keys = path.split(".");
+  let obj = cfg;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!obj[keys[i]]) obj[keys[i]] = {};
+    obj = obj[keys[i]];
+  }
+  obj[keys[keys.length - 1]] = value;
+}
 
-  try {
-    await api("POST", "/api/config", data);
-    toast("Configuration saved!", "success");
-    loadConfig();
-  } catch (err) { toast(err.message, "error"); }
+async function loadConfig() {
+  const res = await api("/api/config");
+  if (!res.ok) return;
+  const cfg = res.data;
+
+  for (const item of CONFIG_MAP) {
+    const el = document.getElementById(item.id);
+    if (!el) continue;
+    const val = getConfigValue(cfg, item.path);
+    if (item.type === "csv" && Array.isArray(val)) {
+      el.value = val.join(", ");
+    } else {
+      el.value = val ?? "";
+    }
+  }
+}
+
+document.getElementById("btn-save-config").addEventListener("click", async () => {
+  const res = await api("/api/config");
+  if (!res.ok) return;
+  const cfg = res.data;
+
+  for (const item of CONFIG_MAP) {
+    const el = document.getElementById(item.id);
+    if (!el) continue;
+    let val;
+    if (item.type === "number") {
+      val = parseFloat(el.value);
+      if (isNaN(val)) continue;
+    } else if (item.type === "csv") {
+      val = el.value.split(",").map((s) => s.trim()).filter(Boolean);
+    } else {
+      val = el.value;
+    }
+    setConfigValue(cfg, item.path, val);
+  }
+
+  const saveRes = await api("/api/config", {
+    method: "PUT",
+    body: JSON.stringify(cfg),
+  });
+
+  if (saveRes.ok) {
+    toast("Configuration saved", "success");
+  } else {
+    toast(saveRes.error || "Save failed", "error");
+  }
 });
 
-$("btn-reset-config").addEventListener("click", async () => {
+document.getElementById("btn-reset-config").addEventListener("click", async () => {
   if (!confirm("Reset all settings to defaults?")) return;
-  try {
-    await api("POST", "/api/config/reset");
-    toast("Configuration reset to defaults", "success");
+  const res = await api("/api/config/reset", { method: "POST" });
+  if (res.ok) {
+    toast("Reset to defaults", "success");
     loadConfig();
-  } catch (err) { toast(err.message, "error"); }
+  } else {
+    toast(res.error || "Reset failed", "error");
+  }
 });
 
 // =============================================================================
 // INIT
 // =============================================================================
 
-(async function init() {
+async function init() {
   await loadAgents();
   loadPersonas();
+  loadMemories();
   loadWorkspaceFiles();
-  loadConfig(); // Pre-load config state
-})();
+}
+
+init();

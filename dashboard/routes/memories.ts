@@ -160,6 +160,34 @@ export function registerMemoryRoutes(router: Router): void {
     sendJson(res, 200, { ok: true, data: rows[0] });
   });
 
+  // EDGES for a specific memory
+  router.get("/api/memories/:id/edges", async (_req, res, ctx) => {
+    const agentId = ctx.query.agentId || "main";
+    const memoryId = ctx.params.id;
+    const sql = getSql();
+
+    const rows = await sql.begin(async (tx: any) => {
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+      return await tx`
+        SELECT e.id, e.source_memory_id, e.target_memory_id,
+               e.source_persona_id, e.target_persona_id,
+               e.relationship_type, e.weight, e.created_at,
+               s.content AS source_content, t.content AS target_content,
+               sp.category AS source_persona_category, tp.category AS target_persona_category
+        FROM entity_edges e
+        LEFT JOIN memory_semantic s ON e.source_memory_id = s.id
+        LEFT JOIN memory_semantic t ON e.target_memory_id = t.id
+        LEFT JOIN agent_persona sp ON e.source_persona_id = sp.id
+        LEFT JOIN agent_persona tp ON e.target_persona_id = tp.id
+        WHERE e.agent_id = ${agentId}
+          AND (e.source_memory_id = ${memoryId} OR e.target_memory_id = ${memoryId})
+        ORDER BY e.created_at DESC
+      `;
+    });
+
+    sendJson(res, 200, { ok: true, data: rows });
+  });
+
   // DELETE (archive)
   router.delete("/api/memories/:id", async (_req, res, ctx) => {
     const agentId = ctx.query.agentId || "main";

@@ -9,6 +9,7 @@ export interface PostClawConfig {
     semanticLimit: number;
     linkedSimilarity: number;
     totalLimit: number;
+    maxTraversalDepth: number;
   };
   persona: {
     situationalLimit: number;
@@ -40,6 +41,7 @@ export const DEFAULT_CONFIG: PostClawConfig = {
     semanticLimit: 7,
     linkedSimilarity: 0.8,
     totalLimit: 15,
+    maxTraversalDepth: 3,
   },
   persona: {
     situationalLimit: 3,
@@ -60,28 +62,9 @@ export const DEFAULT_CONFIG: PostClawConfig = {
     maxCacheSize: 1000,
   },
   prompts: {
-    memoryRules: `## Memory & Knowledge Management
-You are a stateful agent. Your context window is ephemeral but your PostgreSQL memory is permanent.
-Silently manage your knowledge — never ask permission to save, link, or update facts.
-
-- **Retrieval:** Relevant memories (with UUID tags) are auto-injected.
-- **Search:** Use the \`memory_search\` tool when you need to recall facts not in the current context.
-- **Correct/update facts:** Use the \`memory_update\` tool when a fact is incorrect, outdated, or needs to be updated. When using memory_update, ALWAYS assign an appropriate 'tier' and 'category'.
-- **Save new facts:** Use the \`memory_store\` tool when a new fact is learned. When using memory_store, ALWAYS assign an appropriate 'tier' (e.g., 'permanent' for core user identity, 'daily' for current tasks) and 'category'.
-- **Link related memories:** Use the \`memory_link\` tool when two memories are related.`,
-    personaRules: `## Persona Management
-You have access to the following tools to manage your persona/identity/rules:
-
-- **Retrieval**: Use \`persona_list\` to see all available persona rules or \`persona_get\` for details.
-- **Creation**: Use \`persona_create\` to define a new set of rules or identity markers.
-- **Modification**: Use \`persona_update\` to modify an existing persona rule.
-- **Deletion**: Use \`persona_delete\` to remove a persona rule.`,
-    heartbeatRules: `## Autonomous Heartbeats
-OpenClaw provides a native heartbeat loop — never use Linux crontab.
-To schedule background tasks, add a checklist to: {{heartbeatFilePath}}
-On heartbeat poll: read that file. If no pending tasks, reply with ONLY: HEARTBEAT_OK
-
-**Always Reply**: ALWAYS conclude your turn with a direct response to the user.`,
+    memoryRules: `You have persistent memory backed by PostgreSQL. Relevant facts are auto-injected into context with UUID tags. Silently save new facts, correct outdated ones, and link related knowledge — never ask permission. Assign appropriate tiers (permanent, stable, daily) and categories when storing.`,
+    personaRules: `Your identity rules are automatically injected based on context relevance. You can modify your own persona traits when explicitly asked, but do not mention the persona system unprompted.`,
+    heartbeatRules: `Read {{heartbeatFilePath}} if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK..`,
     heartbeatFilePath: "/home/cl/.openclaw/workspace/HEARTBEAT.md",
   }
 };

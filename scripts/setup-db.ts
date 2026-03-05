@@ -177,12 +177,19 @@ CREATE TABLE IF NOT EXISTS conversation_checkpoints (
 CREATE TABLE IF NOT EXISTS entity_edges (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id VARCHAR(100) NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    source_memory_id UUID REFERENCES memory_semantic(id),
-    target_memory_id UUID REFERENCES memory_semantic(id),
+    source_memory_id UUID REFERENCES memory_semantic(id) ON DELETE CASCADE,
+    target_memory_id UUID REFERENCES memory_semantic(id) ON DELETE CASCADE,
+    source_persona_id UUID REFERENCES agent_persona(id) ON DELETE CASCADE,
+    target_persona_id UUID REFERENCES agent_persona(id) ON DELETE CASCADE,
     relationship_type VARCHAR(100) NOT NULL,
     weight REAL DEFAULT 1.0,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    CHECK (source_memory_id != target_memory_id),
+    CHECK (
+        (source_memory_id IS NOT NULL OR source_persona_id IS NOT NULL)
+        AND (target_memory_id IS NOT NULL OR target_persona_id IS NOT NULL)
+        AND NOT (source_memory_id IS NOT NULL AND source_memory_id = target_memory_id)
+        AND NOT (source_persona_id IS NOT NULL AND source_persona_id = target_persona_id)
+    ),
     UNIQUE(source_memory_id, target_memory_id, relationship_type)
 );
 
@@ -221,6 +228,8 @@ CREATE INDEX IF NOT EXISTS idx_mem_sem_vector_nomic ON memory_semantic USING hns
 CREATE INDEX IF NOT EXISTS idx_mem_sem_vector_openai ON memory_semantic USING hnsw ((embedding::vector(1536)) vector_cosine_ops) WHERE embedding_model = 'text-embedding-3-small';
 CREATE INDEX IF NOT EXISTS idx_edges_source ON entity_edges(source_memory_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON entity_edges(target_memory_id);
+CREATE INDEX IF NOT EXISTS idx_edges_source_persona ON entity_edges(source_persona_id) WHERE source_persona_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_edges_target_persona ON entity_edges(target_persona_id) WHERE target_persona_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_mem_sem_superseded ON memory_semantic(superseded_by) WHERE superseded_by IS NOT NULL;
 
 -- 7. Row-Level Security

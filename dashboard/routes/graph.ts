@@ -1,9 +1,9 @@
 /**
  * Dashboard API Routes — Knowledge graph endpoints.
  *
- * GET    /api/graph        — Full graph data for D3 visualization
+ * GET    /api/graph        — Full graph data for D3 visualization (memories + personas)
  * GET    /api/edges        — List edges
- * POST   /api/edges        — Create edge
+ * POST   /api/edges        — Create edge (memory↔memory or persona↔memory)
  * DELETE /api/edges/:id    — Delete edge
  */
 
@@ -17,7 +17,7 @@ import { GraphEdgeCreateSchema } from "../../schemas/validation.js";
 // =============================================================================
 
 export function registerGraphRoutes(router: Router): void {
-  // FULL GRAPH — nodes + edges for D3 force graph
+  // FULL GRAPH — nodes + edges for D3 force graph (includes persona nodes)
   router.get("/api/graph", async (_req, res, ctx) => {
     const agentId = ctx.query.agentId || "main";
     const sql = getSql();
@@ -25,7 +25,7 @@ export function registerGraphRoutes(router: Router): void {
     const result = await sql.begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
 
-      const nodes = await tx`
+      const memoryNodes = await tx`
         SELECT id, content, category, tier, access_count, usefulness_score, is_archived
         FROM memory_semantic
         WHERE agent_id = ${agentId} AND is_archived = false
@@ -33,39 +33,68 @@ export function registerGraphRoutes(router: Router): void {
         LIMIT 200
       `;
 
+      const personaNodes = await tx`
+        SELECT id, category, content, is_always_active
+        FROM agent_persona
+        WHERE agent_id = ${agentId}
+      `;
+
       const edges = await tx`
-        SELECT id, source_memory_id, target_memory_id, relationship_type, weight
+        SELECT id, source_memory_id, target_memory_id,
+               source_persona_id, target_persona_id,
+               relationship_type, weight
         FROM entity_edges
         WHERE agent_id = ${agentId}
       `;
 
-      return { nodes, edges };
+      return { memoryNodes, personaNodes, edges };
     });
 
+    // Build node ID set for edge filtering
+    const nodeIds = new Set([
+      ...result.memoryNodes.map((n: any) => n.id),
+      ...result.personaNodes.map((n: any) => n.id),
+    ]);
+
     // Filter to only include edges where both source and target exist in nodes
-    const nodeIds = new Set(result.nodes.map((n: { id: string }) => n.id));
-    const validEdges = result.edges.filter(
-      (e: { source_memory_id: string; target_memory_id: string }) =>
-        nodeIds.has(e.source_memory_id) && nodeIds.has(e.target_memory_id),
-    );
+    const validEdges = result.edges.filter((e: any) => {
+      const src = e.source_memory_id || e.source_persona_id;
+      const tgt = e.target_memory_id || e.target_persona_id;
+      return nodeIds.has(src) && nodeIds.has(tgt);
+    });
 
     sendJson(res, 200, {
       ok: true,
       data: {
-        nodes: result.nodes.map((n: any) => ({
-          id: n.id,
-          label: n.content.substring(0, 80),
-          category: n.category,
-          tier: n.tier,
-          accessCount: n.access_count,
-          score: n.usefulness_score,
-        })),
+        nodes: [
+          ...result.memoryNodes.map((n: any) => ({
+            id: n.id,
+            type: "memory",
+            label: n.content.substring(0, 80),
+            category: n.category,
+            tier: n.tier,
+            accessCount: n.access_count,
+            score: n.usefulness_score,
+          })),
+          ...result.personaNodes.map((n: any) => ({
+            id: n.id,
+            type: "persona",
+            label: n.content.substring(0, 80),
+            category: n.category,
+            tier: n.is_always_active ? "permanent" : "stable",
+            accessCount: 0,
+            score: 0,
+            isAlwaysActive: n.is_always_active,
+          })),
+        ],
         edges: validEdges.map((e: any) => ({
           id: e.id,
-          source: e.source_memory_id,
-          target: e.target_memory_id,
+          source: e.source_memory_id || e.source_persona_id,
+          target: e.target_memory_id || e.target_persona_id,
           relationship: e.relationship_type,
           weight: e.weight,
+          sourceType: e.source_persona_id ? "persona" : "memory",
+          targetType: e.target_persona_id ? "persona" : "memory",
         })),
       },
     });
@@ -80,11 +109,15 @@ export function registerGraphRoutes(router: Router): void {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
       return await tx`
         SELECT e.id, e.source_memory_id, e.target_memory_id,
+               e.source_persona_id, e.target_persona_id,
                e.relationship_type, e.weight, e.created_at,
-               s.content AS source_content, t.content AS target_content
+               s.content AS source_content, t.content AS target_content,
+               sp.category AS source_persona_category, tp.category AS target_persona_category
         FROM entity_edges e
         LEFT JOIN memory_semantic s ON e.source_memory_id = s.id
         LEFT JOIN memory_semantic t ON e.target_memory_id = t.id
+        LEFT JOIN agent_persona sp ON e.source_persona_id = sp.id
+        LEFT JOIN agent_persona tp ON e.target_persona_id = tp.id
         WHERE e.agent_id = ${agentId}
         ORDER BY e.created_at DESC
         LIMIT 200
@@ -94,7 +127,7 @@ export function registerGraphRoutes(router: Router): void {
     sendJson(res, 200, { ok: true, data: rows });
   });
 
-  // CREATE EDGE
+  // CREATE EDGE (supports memory↔memory and persona↔memory)
   router.post("/api/edges", async (req, res, ctx) => {
     const agentId = ctx.query.agentId || "main";
     const body = await parseBody(req);
@@ -108,12 +141,16 @@ export function registerGraphRoutes(router: Router): void {
         await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
         return await tx`
           INSERT INTO entity_edges (
-            agent_id, source_memory_id, target_memory_id, relationship_type, weight
+            agent_id, source_memory_id, target_memory_id,
+            source_persona_id, target_persona_id,
+            relationship_type, weight
           ) VALUES (
-            ${agentId}, ${data.source_memory_id}, ${data.target_memory_id},
+            ${agentId},
+            ${data.source_memory_id || null}, ${data.target_memory_id || null},
+            ${data.source_persona_id || null}, ${data.target_persona_id || null},
             ${data.relationship_type}, ${data.weight}
           )
-          ON CONFLICT (source_memory_id, target_memory_id, relationship_type) DO NOTHING
+          ON CONFLICT DO NOTHING
           RETURNING id
         `;
       });

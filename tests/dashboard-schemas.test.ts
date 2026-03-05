@@ -13,6 +13,8 @@ import {
   GraphEdgeCreateSchema,
   ScriptRunSchema,
   MemoryListQuerySchema,
+  PersonaEdgeCreateSchema,
+  WorkspaceImportSchema,
 } from "../schemas/validation.js";
 
 // =============================================================================
@@ -142,13 +144,28 @@ describe("MemoryImportSchema", () => {
 // =============================================================================
 
 describe("GraphEdgeCreateSchema", () => {
-  it("accepts valid edge", () => {
+  it("accepts valid memory-to-memory edge", () => {
     const result = GraphEdgeCreateSchema.parse({
       source_memory_id: "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
       target_memory_id: "f1e2d3c4-b5a6-4a5b-8c9d-0e1f2a3b4c5d",
       relationship_type: "related_to",
     });
     expect(result.weight).toBe(1.0);
+  });
+
+  it("accepts persona-to-memory edge", () => {
+    const result = GraphEdgeCreateSchema.parse({
+      source_persona_id: "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+      target_memory_id: "f1e2d3c4-b5a6-4a5b-8c9d-0e1f2a3b4c5d",
+      relationship_type: "defines",
+    });
+    expect(result.source_persona_id).toBe("a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d");
+  });
+
+  it("rejects edge with no source or target", () => {
+    expect(() => GraphEdgeCreateSchema.parse({
+      relationship_type: "related_to",
+    })).toThrow();
   });
 
   it("rejects invalid UUID", () => {
@@ -201,5 +218,70 @@ describe("MemoryListQuerySchema", () => {
 
   it("rejects limit over 500", () => {
     expect(() => MemoryListQuerySchema.parse({ limit: "501" })).toThrow();
+  });
+});
+
+// =============================================================================
+// NEW: PERSONA EDGE & WORKSPACE IMPORT SCHEMAS
+// =============================================================================
+
+describe("PersonaEdgeCreateSchema", () => {
+  it("accepts valid persona-memory link", () => {
+    const result = PersonaEdgeCreateSchema.parse({
+      persona_id: "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+      memory_id: "f1e2d3c4-b5a6-4a5b-8c9d-0e1f2a3b4c5d",
+      relationship_type: "defines",
+    });
+    expect(result.weight).toBe(1.0);
+    expect(result.relationship_type).toBe("defines");
+  });
+
+  it("rejects invalid persona UUID", () => {
+    expect(() => PersonaEdgeCreateSchema.parse({
+      persona_id: "not-valid",
+      memory_id: "f1e2d3c4-b5a6-4a5b-8c9d-0e1f2a3b4c5d",
+      relationship_type: "supports",
+    })).toThrow();
+  });
+
+  it("rejects missing relationship", () => {
+    expect(() => PersonaEdgeCreateSchema.parse({
+      persona_id: "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+      memory_id: "f1e2d3c4-b5a6-4a5b-8c9d-0e1f2a3b4c5d",
+    })).toThrow();
+  });
+});
+
+describe("WorkspaceImportSchema", () => {
+  it("accepts valid persona import", () => {
+    const result = WorkspaceImportSchema.parse({
+      filename: "SOUL.md",
+      target: "persona",
+    });
+    expect(result.tier).toBe("stable");
+    expect(result.target).toBe("persona");
+  });
+
+  it("accepts valid memory import with tier", () => {
+    const result = WorkspaceImportSchema.parse({
+      filename: "notes.md",
+      target: "memory",
+      tier: "permanent",
+    });
+    expect(result.tier).toBe("permanent");
+  });
+
+  it("rejects invalid target", () => {
+    expect(() => WorkspaceImportSchema.parse({
+      filename: "test.md",
+      target: "invalid",
+    })).toThrow();
+  });
+
+  it("rejects empty filename", () => {
+    expect(() => WorkspaceImportSchema.parse({
+      filename: "",
+      target: "persona",
+    })).toThrow();
   });
 });

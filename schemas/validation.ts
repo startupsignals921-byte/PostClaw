@@ -368,15 +368,39 @@ export const MemoryImportSchema = z.object({
 
 export type MemoryImport = z.infer<typeof MemoryImportSchema>;
 
-/** Create a knowledge graph edge */
+/** Create a knowledge graph edge (memory↔memory) */
 export const GraphEdgeCreateSchema = z.object({
-    source_memory_id: z.string().uuid(),
-    target_memory_id: z.string().uuid(),
+    source_memory_id: z.string().uuid().optional(),
+    target_memory_id: z.string().uuid().optional(),
+    source_persona_id: z.string().uuid().optional(),
+    target_persona_id: z.string().uuid().optional(),
+    relationship_type: z.string().min(1).max(100),
+    weight: z.number().min(0).max(10).default(1.0),
+}).refine(
+    (d) => (d.source_memory_id || d.source_persona_id) && (d.target_memory_id || d.target_persona_id),
+    { message: "At least one source and one target ID required" },
+);
+
+export type GraphEdgeCreate = z.infer<typeof GraphEdgeCreateSchema>;
+
+/** Create a persona↔memory edge */
+export const PersonaEdgeCreateSchema = z.object({
+    persona_id: z.string().uuid(),
+    memory_id: z.string().uuid(),
     relationship_type: z.string().min(1).max(100),
     weight: z.number().min(0).max(10).default(1.0),
 });
 
-export type GraphEdgeCreate = z.infer<typeof GraphEdgeCreateSchema>;
+export type PersonaEdgeCreate = z.infer<typeof PersonaEdgeCreateSchema>;
+
+/** Import workspace .md file as persona entries or memory chunks */
+export const WorkspaceImportSchema = z.object({
+    filename: z.string().min(1),
+    target: z.enum(["persona", "memory"]),
+    tier: MemoryTierSchema.default("stable"),
+});
+
+export type WorkspaceImport = z.infer<typeof WorkspaceImportSchema>;
 
 /** Trigger a script run */
 export const ScriptRunSchema = z.object({

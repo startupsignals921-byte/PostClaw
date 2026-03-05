@@ -178,3 +178,107 @@ export async function deletePersona(agentId: string, personaId: string): Promise
     throw err;
   }
 }
+
+// =============================================================================
+// PERSONA ↔ MEMORY LINKING
+// =============================================================================
+
+export interface PersonaLink {
+  id: string;
+  persona_id: string;
+  memory_id: string;
+  persona_category: string;
+  memory_content: string;
+  relationship_type: string;
+  weight: number;
+  created_at: string;
+}
+
+/**
+ * Link a persona trait to a memory via entity_edges.
+ */
+export async function linkPersonaToMemory(
+  agentId: string,
+  personaId: string,
+  memoryId: string,
+  relationship: string,
+  weight: number = 1.0,
+): Promise<{ id: string | null; status: string }> {
+  try {
+    const rows = await getSql().begin(async (tx: any) => {
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+      return await tx`
+        INSERT INTO entity_edges (
+          agent_id, source_persona_id, target_memory_id, relationship_type, weight
+        ) VALUES (
+          ${agentId}, ${personaId}, ${memoryId}, ${relationship}, ${weight}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+    });
+    if (rows.length === 0) {
+      return { id: null, status: "already_exists" };
+    }
+    console.log(`[PERSONA] Linked persona ${personaId.substring(0, 8)} → memory ${memoryId.substring(0, 8)}`);
+    return { id: rows[0].id, status: "linked" };
+  } catch (err) {
+    console.error("[PERSONA] Link failed:", err);
+    return { id: null, status: `error: ${err}` };
+  }
+}
+
+/**
+ * Remove a persona↔memory link.
+ */
+export async function unlinkPersonaFromMemory(
+  agentId: string,
+  edgeId: string,
+): Promise<boolean> {
+  try {
+    const rows = await getSql().begin(async (tx: any) => {
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+      return await tx`
+        DELETE FROM entity_edges
+        WHERE id = ${edgeId}
+          AND agent_id = ${agentId}
+          AND (source_persona_id IS NOT NULL OR target_persona_id IS NOT NULL)
+        RETURNING id
+      `;
+    });
+    return rows.length > 0;
+  } catch (err) {
+    console.error("[PERSONA] Unlink failed:", err);
+    throw err;
+  }
+}
+
+/**
+ * Get all edges connected to a persona trait.
+ */
+export async function getPersonaLinks(
+  agentId: string,
+  personaId: string,
+): Promise<PersonaLink[]> {
+  try {
+    const rows = await getSql().begin(async (tx: any) => {
+      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+      return await tx`
+        SELECT e.id, e.source_persona_id AS persona_id, e.target_memory_id AS memory_id,
+               p.category AS persona_category, m.content AS memory_content,
+               e.relationship_type, e.weight, e.created_at
+        FROM entity_edges e
+        LEFT JOIN agent_persona p ON e.source_persona_id = p.id
+        LEFT JOIN memory_semantic m ON e.target_memory_id = m.id
+        WHERE e.agent_id = ${agentId}
+          AND (e.source_persona_id = ${personaId} OR e.target_persona_id = ${personaId})
+        ORDER BY e.created_at DESC
+      `;
+    });
+    return rows as PersonaLink[];
+  } catch (err) {
+    console.error("[PERSONA] Get links failed:", err);
+    throw err;
+  }
+}
+
