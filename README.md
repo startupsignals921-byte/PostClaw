@@ -38,7 +38,7 @@ To use PostClaw, your environment must meet the following infrastructure require
       "memorySearch": {
         "model": "text-embedding-nomic-embed-text-v2-moe",
         "remote": {
-          "baseUrl": "http://localhost:1234/v1" # example for LM Studio
+          "baseUrl": "http://localhost:1234/v1" // example for LM Studio
         }
       },
     }
