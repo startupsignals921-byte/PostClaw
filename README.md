@@ -32,7 +32,17 @@ To use PostClaw, your environment must meet the following infrastructure require
 2. **PostgreSQL 14+ with pgvector:** A running database server. The `pgvector` and `pgcrypto` extensions are strictly required for mathematical embeddings and UUID generation. *(e.g., `postgresql-16-pgvector`)*.
 3. **Node.js (v18+):** For executing the plugin scripts.
 4. **An Embedding Provider:** A local endpoint (like LM Studio or Ollama) running an embedding model natively (such as `nomic-embed-text-v2-moe`) to convert text into vectors.
-
+```json
+"agents": {
+    "defaults": {
+      "memorySearch": {
+        "model": "text-embedding-nomic-embed-text-v2-moe",
+        "remote": {
+          "baseUrl": "http://192.168.64.6:1234/v1"
+        }
+      },
+    }
+}
 ---
 
 ## 🚀 Quick Start Guide
