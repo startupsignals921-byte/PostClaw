@@ -73,7 +73,8 @@ export async function getEmbedding(text: string): Promise<number[]> {
   console.log(`[EMBED] Request body preview: ${body.substring(0, 200)}`);
 
   // Strip any trailing /v1 or /v1/ from the base URL to avoid doubling
-  const baseUrl = LM_STUDIO_URL!.replace(/\/v1\/?$/, "");
+  // Replace 'localhost' with '127.0.0.1' to prevent Node 18+ IPv6 fetch failures
+  const baseUrl = LM_STUDIO_URL!.replace(/\/v1\/?$/, "").replace("localhost", "127.0.0.1");
   const res = await fetch(`${baseUrl}/v1/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
