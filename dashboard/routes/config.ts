@@ -39,8 +39,11 @@ export function registerConfigRoutes(router: Router) {
       const { getSql } = await import("../../services/db.js");
       const { loadConfig } = await import("../../services/config.js");
       const sql = getSql();
-      await sql`DELETE FROM plugin_config WHERE agent_id = ${agentId}`;
-      
+      await sql.begin(async (tx: any) => {
+        await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+        await tx`DELETE FROM plugin_config WHERE agent_id = ${agentId}`;
+      });
+
       // Reload defaults into memory
       const config = await loadConfig(agentId);
       sendJson(res, 200, { ok: true, data: config });
