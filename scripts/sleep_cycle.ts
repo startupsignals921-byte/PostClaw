@@ -643,6 +643,7 @@ Do not use markdown formatting.
       return z.array(LinkClassificationSchema).parse(JSON.parse(cleanString));
     } catch (err: any) {
       console.error(`\n[PHASE 4] ⚠️ Parsing skipped for batch ${batchIndexHuman} (or a fragment of it).`);
+      console.error(`[PHASE 4] Error details:`, err);
       console.error(`[PHASE 4] LLM response could not be parsed as a valid JSON array of relationships.`);
       console.error(`[PHASE 4] Raw LLM Output:\n${jsonString}\n`);
       return [];

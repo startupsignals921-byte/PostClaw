@@ -68,7 +68,8 @@ export async function callLLMviaAgent(
 
     text = parsed.data.result?.payloads?.[0]?.text ?? "";
     if (!text) {
-      throw new Error("openclaw agent returned no text in result.payloads[0].text");
+      console.warn("openclaw agent returned empty text payload. Returning empty string instead of throwing.");
+      return "";
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
