@@ -144,13 +144,6 @@ async function phaseConsolidateEpisodic(agentId: string, limit: number): Promise
 
   console.log(`[PHASE 1] Found ${episodes.length} episodic events to consolidate.`);
 
-  const transcript = episodes
-    .map((e: Record<string, unknown>) => {
-      const row = e as EpisodicRow;
-      return `[${row.created_at}] [${row.event_type.toUpperCase()}]: ${row.event_summary}`;
-    })
-    .join("\n");
-
   const systemPrompt = `
 You are the subconscious memory consolidation engine for an AI assistant.
 Your job is to review the following chronological transcript of the agent's recent short-term memory (user prompts and tool executions).
@@ -167,21 +160,46 @@ Output your response EXCLUSIVELY as a JSON object matching this schema:
 Do not use markdown formatting.
 `;
 
-  const jsonString = await callLLMviaAgent(`${systemPrompt}\n\nHere is the recent episodic transcript to analyze:\n\n${transcript}`, agentId);
-  
-  let result: SleepCycleResult;
-  try {
-    const cleanString = extractJsonFromLlmOutput(jsonString);
-    result = SleepCycleResultSchema.parse(JSON.parse(cleanString));
-  } catch (err: any) {
-    console.error(`\n[PHASE 1] ❌ FATAL PARSE ERROR`);
-    console.error(`The internal LLM response could not be parsed as valid JSON.`);
-    console.error(`This blocks the promotion of short-term memories into semantic facts.\n`);
-    console.error(`=== RAW LLM OUTPUT ===`);
-    console.error(jsonString);
-    console.error(`======================\n`);
-    throw new Error(`Episodic consolidation parsing failed: ${err.message}`);
+  async function processChunk(chunk: any[]): Promise<SleepCycleResult> {
+    const transcript = chunk
+      .map((e: Record<string, unknown>) => {
+        const row = e as EpisodicRow;
+        return `[${row.created_at}] [${row.event_type.toUpperCase()}]: ${row.event_summary}`;
+      })
+      .join("\n");
+
+    let jsonString = "";
+    try {
+      jsonString = await callLLMviaAgent(`${systemPrompt}\n\nHere is the recent episodic transcript to analyze:\n\n${transcript}`, agentId);
+    } catch (err: any) {
+      if (err.message && err.message.includes('E2BIG') && chunk.length > 1) {
+        console.warn(`[PHASE 1] ⚠️ E2BIG error (chunk size: ${chunk.length}). Halving chunk and retrying...`);
+        const mid = Math.floor(chunk.length / 2);
+        const res1 = await processChunk(chunk.slice(0, mid));
+        const res2 = await processChunk(chunk.slice(mid));
+        return {
+          session_summary: (res1.session_summary || "") + (res2.session_summary ? " " + res2.session_summary : ""),
+          extracted_durable_facts: [...res1.extracted_durable_facts, ...res2.extracted_durable_facts]
+        };
+      }
+      throw err;
+    }
+
+    try {
+      const cleanString = extractJsonFromLlmOutput(jsonString);
+      return SleepCycleResultSchema.parse(JSON.parse(cleanString));
+    } catch (err: any) {
+      console.error(`\n[PHASE 1] ❌ FATAL PARSE ERROR`);
+      console.error(`The internal LLM response could not be parsed as valid JSON.`);
+      console.error(`This blocks the promotion of short-term memories into semantic facts.\n`);
+      console.error(`=== RAW LLM OUTPUT ===`);
+      console.error(jsonString);
+      console.error(`======================\n`);
+      throw new Error(`Episodic consolidation parsing failed: ${err.message}`);
+    }
   }
+
+  const result: SleepCycleResult = await processChunk(episodes);
 
   console.log(`[PHASE 1] Extracted ${result.extracted_durable_facts.length} permanent facts.`);
   console.log(`[PHASE 1] Session Summary: ${result.session_summary}`);
@@ -514,14 +532,7 @@ async function phaseLinkDiscovery(agentId: string, options: { min: number; max: 
 
   let linksCreated = 0;
 
-  for (let i = 0; i < candidatePairs.length; i += options.batchSize) {
-    const batch = candidatePairs.slice(i, i + options.batchSize);
-
-    const pairsDescription = batch
-      .map((p, idx) => `${idx + 1}. [A: ${p.source_type}/${p.source_id}] "${p.source_content}"\n   [B: ${p.target_type}/${p.target_id}] "${p.target_content}" (similarity: ${(p.similarity * 100).toFixed(1)}%)`)
-      .join("\n\n");
-
-    const systemPrompt = `
+  const linkSystemPrompt = `
 You are a knowledge graph relationship classifier.
 Given pairs of memory entries and/or persona traits, classify the relationship between them.
 
@@ -542,18 +553,41 @@ Use "none" for pairs that don't have a meaningful relationship worth persisting.
 Do not use markdown formatting.
 `;
 
-    const jsonString = await callLLMviaAgent(`${systemPrompt}\n\nClassify the relationships between these pairs:\n\n${pairsDescription}`, agentId);
+  async function processBatch(batch: CandidatePair[], batchIndexHuman: number): Promise<LinkClassification[]> {
+    const pairsDescription = batch
+      .map((p, idx) => `${idx + 1}. [A: ${p.source_type}/${p.source_id}] "${p.source_content}"\n   [B: ${p.target_type}/${p.target_id}] "${p.target_content}" (similarity: ${(p.similarity * 100).toFixed(1)}%)`)
+      .join("\n\n");
 
-    let classifications: LinkClassification[];
+    let jsonString = "";
+    try {
+      jsonString = await callLLMviaAgent(`${linkSystemPrompt}\n\nClassify the relationships between these pairs:\n\n${pairsDescription}`, agentId);
+    } catch (err: any) {
+      if (err.message && err.message.includes('E2BIG') && batch.length > 1) {
+        console.warn(`[PHASE 4] ⚠️ E2BIG error (batch size: ${batch.length}). Halving batch and retrying...`);
+        const mid = Math.floor(batch.length / 2);
+        const res1 = await processBatch(batch.slice(0, mid), batchIndexHuman);
+        const res2 = await processBatch(batch.slice(mid), batchIndexHuman);
+        return [...res1, ...res2];
+      }
+      throw err;
+    }
+
     try {
       const cleanString = extractJsonFromLlmOutput(jsonString);
-      classifications = z.array(LinkClassificationSchema).parse(JSON.parse(cleanString));
+      return z.array(LinkClassificationSchema).parse(JSON.parse(cleanString));
     } catch (err: any) {
-      console.error(`\n[PHASE 4] ⚠️ Parsing skipped for batch ${Math.floor(i / options.batchSize) + 1}.`);
+      console.error(`\n[PHASE 4] ⚠️ Parsing skipped for batch ${batchIndexHuman} (or a fragment of it).`);
       console.error(`[PHASE 4] LLM response could not be parsed as a valid JSON array of relationships.`);
       console.error(`[PHASE 4] Raw LLM Output:\n${jsonString}\n`);
-      continue;
+      return [];
     }
+  }
+
+  for (let i = 0; i < candidatePairs.length; i += options.batchSize) {
+    const batch = candidatePairs.slice(i, i + options.batchSize);
+    const batchIndexHuman = Math.floor(i / options.batchSize) + 1;
+
+    const classifications = await processBatch(batch, batchIndexHuman);
 
     await sql.begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
