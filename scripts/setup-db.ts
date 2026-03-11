@@ -37,7 +37,7 @@ function log(icon: string, msg: string) {
 
 // ─── Schema SQL (idempotent) ─────────────────────────────────────────────────
 
-function buildSchemaSql(appUser: string, appPassword: string): string {
+function buildSchemaSql(appUser: string, appPassword: string, modelName: string, dimensions: number): string {
     // We generate the full idempotent schema inline so passwords can be injected.
     // Each statement is separated by a clear comment block.
 
@@ -89,8 +89,8 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS agents (
     id VARCHAR(100) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    default_embedding_model VARCHAR(100) DEFAULT 'nomic-embed-text-v2-moe',
-    embedding_dimensions INT DEFAULT 768,
+    default_embedding_model VARCHAR(100) DEFAULT '${modelName}',
+    embedding_dimensions INT DEFAULT ${dimensions},
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT true,
     workspace_dir VARCHAR(512)
@@ -231,8 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_mem_epi_metadata ON memory_episodic USING gin (me
 CREATE INDEX IF NOT EXISTS idx_mem_sem_expires ON memory_semantic(expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_mem_sem_fts ON memory_semantic USING gin (fts_vector);
 CREATE INDEX IF NOT EXISTS idx_mem_epi_fts ON memory_episodic USING gin (fts_vector);
-CREATE INDEX IF NOT EXISTS idx_mem_sem_vector_nomic ON memory_semantic USING hnsw ((embedding::vector(768)) vector_cosine_ops) WHERE embedding_model = 'nomic-embed-text-v2-moe';
-CREATE INDEX IF NOT EXISTS idx_mem_sem_vector_openai ON memory_semantic USING hnsw ((embedding::vector(1536)) vector_cosine_ops) WHERE embedding_model = 'text-embedding-3-small';
+CREATE INDEX IF NOT EXISTS idx_mem_sem_vector_active ON memory_semantic USING hnsw ((embedding::vector(${dimensions})) vector_cosine_ops) WHERE embedding_model = '${modelName}';
 CREATE INDEX IF NOT EXISTS idx_edges_source ON entity_edges(source_memory_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON entity_edges(target_memory_id);
 CREATE INDEX IF NOT EXISTS idx_edges_source_persona ON entity_edges(source_persona_id) WHERE source_persona_id IS NOT NULL;
@@ -372,6 +371,47 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
 
     console.log("\n🦐 PostClaw Database Setup\n");
 
+    // ── Step 0: Dynamically Detect Configured Embedding Dimensions ──────────────
+    let activeModel = "nomic-embed-text-v2-moe";
+    let activeDims = 768; // fallback
+    try {
+        const configPath = resolve(process.env.HOME || "~", ".openclaw", "openclaw.json");
+        if (existsSync(configPath)) {
+            const raw = readFileSync(configPath, "utf-8");
+            const config = JSON.parse(raw);
+            const model = config?.agents?.defaults?.memorySearch?.model || config?.remote?.model;
+            const embedUrl = config?.remote?.url || "http://127.0.0.1:1234/v1";
+            
+            if (model) {
+                activeModel = model;
+                log("🔍", `Detected OpenClaw model config: '${activeModel}' on ${embedUrl}`);
+                
+                try {
+                    // Try to generate a dummy embedding directly against the API to measure dimensions
+                    const res = await fetch(`${embedUrl}/embeddings`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ model: activeModel, input: "test" })
+                    });
+                    
+                    if (res.ok) {
+                        const data: any = await res.json();
+                        if (data?.data?.[0]?.embedding) {
+                           activeDims = data.data[0].embedding.length;
+                           log("✅", `Live dimension check successful: ${activeDims} dimensions detected`);
+                        }
+                    } else {
+                        log("⚠️", `Embedding server at ${embedUrl} returned ${res.status}. Falling back to ${activeDims} dims.`);
+                    }
+                } catch (e: any) {
+                    log("⚠️", `Could not connect to embedding server (${e.message}). Falling back to ${activeDims} dims.`);
+                }
+            }
+        }
+    } catch (err: any) {
+        log("⚠️", `Failed to parse openclaw.json: ${err.message}`);
+    }
+
     // ── Step 1: Connect as superuser ──────────────────────────────────────────
     let adminSql: ReturnType<typeof postgres>;
     try {
@@ -464,9 +504,9 @@ export async function runSetup(opts: SetupOptions = {}): Promise<void> {
     }
 
     try {
-        const schemaSql = buildSchemaSql(appUser, appPassword);
+        const schemaSql = buildSchemaSql(appUser, appPassword, activeModel, activeDims);
         await dbSql.unsafe(schemaSql);
-        log("✅", `Schema created (6 tables, 14 indices, 18 RLS policies)`);
+        log("✅", `Schema created (${activeModel} with vector(${activeDims}))`);
     } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
         log("❌", `Schema creation failed: ${msg}`);
