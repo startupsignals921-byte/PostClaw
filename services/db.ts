@@ -99,6 +99,51 @@ export async function getEmbedding(text: string): Promise<number[]> {
 }
 
 /**
+ * Validates the currently configured embedding model against the dimensions
+ * expected by the Postgres schema for this agent. Returns a compatibility status.
+ */
+export async function validateEmbeddingDimension(agentId: string): Promise<{
+  model: string;
+  expected: number;
+  actual: number;
+  matches: boolean;
+}> {
+  try {
+    const sql = getSql();
+    
+    // 1. Get expected dimensions from schema
+    const agents = await sql`
+      SELECT embedding_dimensions 
+      FROM agents 
+      WHERE id = ${agentId}
+    `;
+    
+    // Default to 768 if entirely missing (e.g. older schema version before columns added)
+    const expected = agents.length > 0 && agents[0].embedding_dimensions 
+      ? agents[0].embedding_dimensions 
+      : 768;
+
+    // 2. Generate a tiny test embedding to find actual dimensions
+    const testEmbedding = await getEmbedding("test dimension check");
+    const actual = testEmbedding.length;
+    
+    const matches = expected === actual;
+    const model = EMBEDDING_MODEL;
+
+    if (!matches) {
+       console.error(`[EMBED] DIMENSION MISMATCH ERROR! Model '${model}' returned ${actual} dimensions, but database schema expects ${expected}. Semantic writes will fail.`);
+    } else {
+       console.log(`[EMBED] Model '${model}' verified: ${actual} dimensions.`);
+    }
+
+    return { model, expected, actual, matches };
+  } catch (err) {
+    console.error(`[EMBED] Failed to validate dimensions:`, err);
+    throw err;
+  }
+}
+
+/**
  * SHA-256 content hash for deduplication.
  */
 export function hashContent(content: string): string {

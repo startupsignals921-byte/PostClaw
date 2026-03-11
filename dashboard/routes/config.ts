@@ -51,4 +51,18 @@ export function registerConfigRoutes(router: Router) {
       sendError(res, 500, `Failed to reset config: ${err}`);
     }
   });
+
+  // GET /api/health/embedding — Validate embedding model dimension match
+  router.get("/api/health/embedding", async (req, res) => {
+    try {
+      const parsedUrl = new URL(req.url!, "http://localhost");
+      const agentId = parsedUrl.searchParams.get("agentId") || "main";
+      const { validateEmbeddingDimension } = await import("../../services/db.js");
+      
+      const result = await validateEmbeddingDimension(agentId);
+      sendJson(res, 200, { ok: true, data: result });
+    } catch (err) {
+      sendError(res, 500, `Failed to check embedding health: ${err}`);
+    }
+  });
 }

@@ -14,7 +14,7 @@
  * gateway is running (default: every 6 hours).
  */
 
-import { getSql, getEmbedding, LM_STUDIO_URL } from "../services/db.js";
+import { getSql, getEmbedding, LM_STUDIO_URL, validateEmbeddingDimension } from "../services/db.js";
 import { ensureAgent } from "../services/memoryService.js";
 import { loadConfig } from "../services/config.js";
 import { callLLMviaAgent } from "../services/llm.js";
@@ -578,6 +578,13 @@ export async function runSleepCycle(opts: SleepCycleOptions = {}): Promise<Sleep
   };
 
   try {
+    // Pre-flight check: ensure embedding model matches DB schema
+    // If we consolidate with the wrong dimensions, PGVector insertion will crash
+    const dimValidation = await validateEmbeddingDimension(agentId);
+    if (!dimValidation.matches) {
+       throw new Error(`Dimension mismatch: Model '${dimValidation.model}' provides ${dimValidation.actual} dims, DB expects ${dimValidation.expected}. Aborting sleep cycle to prevent semantic insertion failures.`);
+    }
+
     stats.factsExtracted = await phaseConsolidateEpisodic(agentId, opts.config?.episodicBatchLimit ?? DEFAULT_EPISODIC_BATCH_LIMIT);
     stats.duplicatesMerged = await phaseDuplicateDetection(agentId, {
       threshold: opts.config?.duplicateSimilarityThreshold ?? DEFAULT_DUPLICATE_SIMILARITY_THRESHOLD,

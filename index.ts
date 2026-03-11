@@ -2,7 +2,7 @@
 // RE-EXPORTS — Single entry point for downstream consumers
 // =============================================================================
 
-export { getSql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, hashContent, setEmbeddingConfig, setDbUrl } from "./services/db.js";
+export { getSql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, hashContent, setEmbeddingConfig, setDbUrl, validateEmbeddingDimension } from "./services/db.js";
 export { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, storeMemory, updateMemory, linkMemories } from "./services/memoryService.js";
 export { listPersonas, getPersona, createPersona, updatePersona, deletePersona } from "./services/personaService.js";
 
@@ -103,6 +103,12 @@ const openclawPostgresPlugin = {
     ensureAgent(agentId, workspaceDir).then(() => {
       loadConfig(agentId).then(() => {
         console.log("[PostClaw] Configuration loaded successfully");
+        // Verify that the configured embedding model dimensions match the schema
+        import("./services/db.js").then(({ validateEmbeddingDimension }) => {
+          validateEmbeddingDimension(agentId).catch((err) => {
+             console.error("[PostClaw] Failed initial embedding validation check:", err);
+          });
+        });
       });
     });
 
