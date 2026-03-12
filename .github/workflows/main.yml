@@ -1,0 +1,35 @@
+name: CI Check
+
+# This workflow triggers whenever a Pull Request is opened or updated against the 'main' branch
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-lint:
+    name: Build and Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Grab the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up the Node.js environment
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22' # Update this to match your project's Node version
+          cache: 'npm'       # Change to 'pnpm' or 'yarn' if you use those package managers
+
+      # 3. Install dependencies cleanly
+      - name: Install dependencies
+        run: npm ci
+
+      # 5. Ensure TypeScript compiles correctly without generating output files
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # 6. Verify the application actually builds
+      - name: Build project
+        run: npm run build
