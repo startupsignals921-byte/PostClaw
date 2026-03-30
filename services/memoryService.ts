@@ -36,6 +36,145 @@ export async function ensureAgent(agentId: string, workspaceDir?: string): Promi
 // SEMANTIC SEARCH + GRAPH TRAVERSAL
 // =============================================================================
 
+const POSTCLAW_MEMORY_PATH_PREFIX = "postclaw://memory/";
+
+type SemanticSearchOptions = {
+  semanticLimit?: number;
+  linkedSimilarity?: number;
+  totalLimit?: number;
+  maxTraversalDepth?: number;
+  trackAs?: "access" | "injection";
+};
+
+type SemanticSearchHit = SearchResultRow & {
+  depth: number;
+};
+
+export type StructuredMemorySearchResult = {
+  path: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+  snippet: string;
+  source: "memory";
+};
+
+function buildMemoryPath(id: string): string {
+  return `${POSTCLAW_MEMORY_PATH_PREFIX}${id}`;
+}
+
+function parseMemoryPath(relPath: string): string | null {
+  if (!relPath || typeof relPath !== "string") return null;
+
+  const trimmed = relPath.trim();
+  if (!trimmed) return null;
+
+  const direct = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (direct) return direct[0];
+
+  if (trimmed.startsWith(POSTCLAW_MEMORY_PATH_PREFIX)) {
+    return trimmed.slice(POSTCLAW_MEMORY_PATH_PREFIX.length) || null;
+  }
+
+  return null;
+}
+
+function formatStructuredSnippet(row: SemanticSearchHit): string {
+  if (!row.relationship_type) return row.content;
+  return `[Linked:${row.relationship_type} depth=${row.depth}] ${row.content}`;
+}
+
+async function runSemanticSearch(
+  agentId: string,
+  userText: string,
+  options: SemanticSearchOptions = {}
+): Promise<SemanticSearchHit[]> {
+  const semanticLimit = options.semanticLimit ?? 7;
+  const totalLimit = options.totalLimit ?? 15;
+  const maxDepth = options.maxTraversalDepth ?? 3;
+  let results: SemanticSearchHit[] = [];
+
+  const embedding = await getEmbedding(userText);
+
+  // Note: postgres.js TransactionSql loses call signatures via Omit<Sql, ...>,
+  // so we must use `any` for the tx callback parameter.
+  await getSql().begin(async (tx: any) => {
+    await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+
+    const queryResults = await tx`
+      WITH RECURSIVE semantic_matches AS (
+        SELECT id, content, 1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
+        FROM memory_semantic
+        WHERE agent_id = ${agentId} AND is_archived = false
+        ORDER BY similarity DESC
+        LIMIT ${semanticLimit}
+      ),
+      graph_walk AS (
+        -- Base case: direct semantic matches
+        SELECT id, content, similarity, NULL::varchar AS relationship_type,
+               0 AS depth, ARRAY[id] AS visited
+        FROM semantic_matches
+
+        UNION ALL
+
+        -- Recursive step: follow edges up to maxDepth hops
+        SELECT m.id, m.content,
+               gw.similarity * 0.85 AS similarity,
+               e.relationship_type,
+               gw.depth + 1 AS depth,
+               gw.visited || m.id
+        FROM graph_walk gw
+        JOIN entity_edges e ON (
+          (e.source_memory_id = gw.id OR e.target_memory_id = gw.id)
+          AND e.agent_id = ${agentId}
+        )
+        JOIN memory_semantic m ON (
+          m.id = CASE
+            WHEN e.source_memory_id = gw.id THEN e.target_memory_id
+            ELSE e.source_memory_id
+          END
+        )
+        WHERE gw.depth < ${maxDepth}
+          AND m.is_archived = false
+          AND m.id != ALL(gw.visited)
+      ),
+      deduped AS (
+        SELECT DISTINCT ON (id) id, content, similarity, relationship_type, depth
+        FROM graph_walk
+        ORDER BY id, similarity DESC
+      )
+      SELECT id, content, similarity, relationship_type, depth
+      FROM deduped
+      ORDER BY similarity DESC
+      LIMIT ${totalLimit};
+    `;
+
+    results = queryResults as SemanticSearchHit[];
+    console.log(`[SEARCH] Query returned ${results.length} row(s) for agent=${agentId} (max depth ${maxDepth})`);
+
+    if (results.length === 0) return;
+
+    const extractedIds = results.map((row) => row.id);
+    if (options.trackAs === "injection") {
+      await tx`
+        UPDATE memory_semantic
+        SET injection_count = injection_count + 1,
+            last_injected_at = CURRENT_TIMESTAMP
+        WHERE id IN ${getSql()(extractedIds)}
+      `;
+    } else {
+      await tx`
+        UPDATE memory_semantic
+        SET access_count = access_count + 1,
+            last_accessed_at = CURRENT_TIMESTAMP
+        WHERE id IN ${getSql()(extractedIds)}
+      `;
+    }
+  });
+
+  return results;
+}
+
 /**
  * Semantic search + graph traversal against memory_semantic + entity_edges.
  * Returns formatted context string or null if no results found.
@@ -43,107 +182,139 @@ export async function ensureAgent(agentId: string, workspaceDir?: string): Promi
 export async function searchPostgres(
   agentId: string,
   userText: string,
-  options: { semanticLimit?: number; linkedSimilarity?: number; totalLimit?: number; maxTraversalDepth?: number; trackAs?: "access" | "injection" } = {}
+  options: SemanticSearchOptions = {}
 ): Promise<string | null> {
   let contextString: string | null = null;
-  const semanticLimit = options.semanticLimit ?? 7;
-  const totalLimit = options.totalLimit ?? 15;
-  const maxDepth = options.maxTraversalDepth ?? 3;
 
   try {
-    const embedding = await getEmbedding(userText);
-
-    // Note: postgres.js TransactionSql loses call signatures via Omit<Sql, ...>,
-    // so we must use `any` for the tx callback parameter.
-    await getSql().begin(async (tx: any) => {
-      await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
-
-      // Recursive CTE: multi-level graph traversal with cycle detection
-      const results = await tx`
-        WITH RECURSIVE semantic_matches AS (
-          SELECT id, content, 1 - (embedding <=> ${JSON.stringify(embedding)}) AS similarity
-          FROM memory_semantic
-          WHERE agent_id = ${agentId} AND is_archived = false
-          ORDER BY similarity DESC
-          LIMIT ${semanticLimit}
-        ),
-        graph_walk AS (
-          -- Base case: direct semantic matches
-          SELECT id, content, similarity, NULL::varchar AS relationship_type,
-                 0 AS depth, ARRAY[id] AS visited
-          FROM semantic_matches
-
-          UNION ALL
-
-          -- Recursive step: follow edges up to maxDepth hops
-          SELECT m.id, m.content,
-                 gw.similarity * 0.85 AS similarity,
-                 e.relationship_type,
-                 gw.depth + 1 AS depth,
-                 gw.visited || m.id
-          FROM graph_walk gw
-          JOIN entity_edges e ON (
-            (e.source_memory_id = gw.id OR e.target_memory_id = gw.id)
-            AND e.agent_id = ${agentId}
-          )
-          JOIN memory_semantic m ON (
-            m.id = CASE
-              WHEN e.source_memory_id = gw.id THEN e.target_memory_id
-              ELSE e.source_memory_id
-            END
-          )
-          WHERE gw.depth < ${maxDepth}
-            AND m.is_archived = false
-            AND m.id != ALL(gw.visited)
-        ),
-        deduped AS (
-          SELECT DISTINCT ON (id) id, content, similarity, relationship_type, depth
-          FROM graph_walk
-          ORDER BY id, similarity DESC
-        )
-        SELECT id, content, similarity, relationship_type, depth
-        FROM deduped
-        ORDER BY similarity DESC
-        LIMIT ${totalLimit};
-      `;
-
-      console.log(`[SEARCH] Query returned ${results.length} row(s) for agent=${agentId} (max depth ${maxDepth})`);
-
-      if (results.length > 0) {
-        contextString = (results as (SearchResultRow & { depth: number })[])
-          .map((r) => {
-            const pct = (r.similarity * 100).toFixed(1) + "%";
-            const label = r.relationship_type
-              ? `Linked[${r.depth}]: ${r.relationship_type}, ${pct}`
-              : pct;
-            return `[ID: ${r.id}] (${label}) - ${r.content}`;
-          })
-          .join("\n");
-
-        // Update tracking columns
-        const extractedIds = (results as SearchResultRow[]).map((r) => r.id);
-        if (options.trackAs === "injection") {
-          await tx`
-            UPDATE memory_semantic
-            SET injection_count = injection_count + 1,
-                last_injected_at = CURRENT_TIMESTAMP
-            WHERE id IN ${getSql()(extractedIds)}
-          `;
-        } else {
-          await tx`
-            UPDATE memory_semantic
-            SET access_count = access_count + 1,
-                last_accessed_at = CURRENT_TIMESTAMP
-            WHERE id IN ${getSql()(extractedIds)}
-          `;
-        }
-      }
-    });
+    const results = await runSemanticSearch(agentId, userText, options);
+    if (results.length > 0) {
+      contextString = results
+        .map((r) => {
+          const pct = (r.similarity * 100).toFixed(1) + "%";
+          const label = r.relationship_type
+            ? `Linked[${r.depth}]: ${r.relationship_type}, ${pct}`
+            : pct;
+          return `[ID: ${r.id}] (${label}) - ${r.content}`;
+        })
+        .join("\n");
+    }
   } catch (err) {
     console.error("[SEARCH] Postgres search error:", err);
   }
 
   return contextString;
+}
+
+export async function searchPostgresStructured(
+  agentId: string,
+  userText: string,
+  options: SemanticSearchOptions = {}
+): Promise<StructuredMemorySearchResult[]> {
+  try {
+    const results = await runSemanticSearch(agentId, userText, options);
+    return results.map((row) => ({
+      path: buildMemoryPath(row.id),
+      startLine: 1,
+      endLine: 1,
+      score: row.similarity,
+      snippet: formatStructuredSnippet(row),
+      source: "memory" as const,
+    }));
+  } catch (err) {
+    console.error("[SEARCH] Structured Postgres search error:", err);
+    return [];
+  }
+}
+
+export async function readMemoryByPath(
+  agentId: string,
+  relPath: string,
+  options: { from?: number; lines?: number } = {}
+): Promise<{ path: string; text: string }> {
+  const memoryId = parseMemoryPath(relPath);
+  if (!memoryId) {
+    throw new Error(`Unsupported PostClaw memory path: ${relPath}`);
+  }
+
+  const rows = await getSql().begin(async (tx: any) => {
+    await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+    return await tx`
+      SELECT id, content
+      FROM memory_semantic
+      WHERE id = ${memoryId} AND agent_id = ${agentId}
+      LIMIT 1
+    `;
+  });
+
+  if (rows.length === 0) {
+    throw new Error(`PostClaw memory not found: ${relPath}`);
+  }
+
+  const rawText = String(rows[0].content ?? "");
+  const sourcePath = buildMemoryPath(rows[0].id);
+  const allLines = rawText.split("\n");
+  const fromLine = options.from && options.from > 0 ? Math.floor(options.from) : 1;
+  const lineCount = options.lines && options.lines > 0 ? Math.floor(options.lines) : allLines.length;
+  const startIndex = Math.max(0, fromLine - 1);
+  const endIndex = Math.min(allLines.length, startIndex + lineCount);
+  const sliced = allLines.slice(startIndex, endIndex).join("\n");
+
+  return {
+    path: sourcePath,
+    text: sliced,
+  };
+}
+
+export async function getPostClawMemoryCounts(agentId: string): Promise<{
+  semantic: number;
+  archived: number;
+  episodic: number;
+}> {
+  return await getSql().begin(async (tx: any) => {
+    await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+
+    const semantic = await tx`
+      SELECT count(*)::int AS total
+      FROM memory_semantic
+      WHERE agent_id = ${agentId} AND is_archived = false
+    `;
+
+    const archived = await tx`
+      SELECT count(*)::int AS total
+      FROM memory_semantic
+      WHERE agent_id = ${agentId} AND is_archived = true
+    `;
+
+    const episodic = await tx`
+      SELECT count(*)::int AS total
+      FROM memory_episodic
+      WHERE agent_id = ${agentId}
+    `;
+
+    return {
+      semantic: semantic[0]?.total ?? 0,
+      archived: archived[0]?.total ?? 0,
+      episodic: episodic[0]?.total ?? 0,
+    };
+  });
+}
+
+export async function probePostgresVectorSearch(agentId: string): Promise<boolean> {
+  const embedding = await getEmbedding("postclaw vector probe");
+
+  await getSql().begin(async (tx: any) => {
+    await tx`SELECT set_config('app.current_agent_id', ${agentId}, true)`;
+    await tx`
+      SELECT id
+      FROM memory_semantic
+      WHERE agent_id = ${agentId} AND is_archived = false
+      ORDER BY embedding <=> ${JSON.stringify(embedding)}
+      LIMIT 1
+    `;
+  });
+
+  return true;
 }
 
 // =============================================================================
@@ -485,4 +656,3 @@ export async function linkMemories(agentId: string,
     return { status: `error: ${msg}` };
   }
 }
-

@@ -2,6 +2,11 @@ import postgres from "postgres";
 import { createHash } from "node:crypto";
 import "dotenv/config";
 import { EmbeddingApiResponseSchema } from "../schemas/validation.js";
+import {
+  DEFAULT_LOCAL_MODEL,
+  createLocalEmbeddingProvider,
+  type MemoryEmbeddingProvider,
+} from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
 
 
 // =============================================================================
@@ -11,6 +16,59 @@ import { EmbeddingApiResponseSchema } from "../schemas/validation.js";
 export let LM_STUDIO_URL = process.env.LM_STUDIO_URL;
 export let POSTCLAW_DB_URL = process.env.POSTCLAW_DB_URL;
 export let EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
+
+type PostClawEmbeddingConfig = {
+  provider?: string;
+  model?: string;
+  remote?: {
+    baseUrl?: string;
+    apiKey?: unknown;
+    headers?: Record<string, string>;
+  };
+  local?: {
+    modelPath?: string;
+    modelCacheDir?: string;
+  };
+};
+
+let _embeddingConfig: PostClawEmbeddingConfig | null = null;
+let _openClawConfig: any = null;
+let _localEmbeddingProviderPromise: Promise<MemoryEmbeddingProvider> | null = null;
+
+export function getEmbeddingRuntimeInfo(): {
+  provider: string;
+  requestedProvider?: string;
+  model: string;
+  local: boolean;
+  remoteBaseUrl?: string;
+} {
+  const requestedProvider = _embeddingConfig?.provider;
+  const provider = requestedProvider === "local"
+    ? "local"
+    : requestedProvider || "remote";
+
+  return {
+    provider,
+    requestedProvider,
+    model: EMBEDDING_MODEL,
+    local: provider === "local",
+    remoteBaseUrl: provider === "local" ? undefined : LM_STUDIO_URL,
+  };
+}
+
+export function describeDbTarget(): string | undefined {
+  if (!POSTCLAW_DB_URL) return undefined;
+
+  try {
+    const parsed = new URL(POSTCLAW_DB_URL);
+    const host = parsed.hostname || "localhost";
+    const port = parsed.port ? `:${parsed.port}` : "";
+    const database = parsed.pathname || "";
+    return `${parsed.protocol}//${host}${port}${database}`;
+  } catch {
+    return "postgres";
+  }
+}
 
 /**
  * Set the database connection URL. Called by the plugin register() if the user
@@ -23,10 +81,60 @@ export function setDbUrl(url: string) {
 /**
  * Configure the embedding provider settings. Usually called by index.ts during OpenClaw initialization.
  */
-export function setEmbeddingConfig(url: string, model: string) {
-  LM_STUDIO_URL = url;
+export function setEmbeddingConfig(configOrUrl: PostClawEmbeddingConfig | string, modelOrHostConfig?: string | any) {
+  _localEmbeddingProviderPromise = null;
+
+  if (typeof configOrUrl === "string") {
+    const model = typeof modelOrHostConfig === "string"
+      ? modelOrHostConfig
+      : process.env.EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
+
+    _embeddingConfig = {
+      provider: "remote",
+      model,
+      remote: { baseUrl: configOrUrl },
+    };
+    _openClawConfig = null;
+    LM_STUDIO_URL = configOrUrl;
+    EMBEDDING_MODEL = model;
+    console.log(`[EMBED] Configured via OpenClaw -> Base: ${configOrUrl} | Model: ${model}`);
+    return;
+  }
+
+  _embeddingConfig = configOrUrl;
+  _openClawConfig = modelOrHostConfig ?? null;
+
+  if (_embeddingConfig?.provider === "local") {
+    LM_STUDIO_URL = undefined;
+    EMBEDDING_MODEL = _embeddingConfig.local?.modelPath || _embeddingConfig.model || DEFAULT_LOCAL_MODEL;
+    console.log(`[EMBED] Configured via OpenClaw -> Provider: local | Model: ${EMBEDDING_MODEL}`);
+    return;
+  }
+
+  const baseUrl = _embeddingConfig?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
+  const model = _embeddingConfig?.model || process.env.EMBEDDING_MODEL || "text-embedding-nomic-embed-text-v2-moe";
+
+  LM_STUDIO_URL = baseUrl;
   EMBEDDING_MODEL = model;
-  console.log(`[EMBED] Configured via OpenClaw -> Base: ${url} | Model: ${model}`);
+  console.log(`[EMBED] Configured via OpenClaw -> Base: ${baseUrl} | Model: ${model}`);
+}
+
+async function getLocalEmbeddingProvider(): Promise<MemoryEmbeddingProvider> {
+  if (!_embeddingConfig || _embeddingConfig.provider !== "local") {
+    throw new Error("[EMBED] Local embedding provider requested without local memorySearch config.");
+  }
+
+  if (!_localEmbeddingProviderPromise) {
+    _localEmbeddingProviderPromise = createLocalEmbeddingProvider({
+      config: _openClawConfig ?? {},
+      provider: "local",
+      fallback: "none",
+      model: _embeddingConfig.model || _embeddingConfig.local?.modelPath || DEFAULT_LOCAL_MODEL,
+      local: _embeddingConfig.local,
+    });
+  }
+
+  return await _localEmbeddingProviderPromise;
 }
 
 // =============================================================================
@@ -61,6 +169,18 @@ export function getSql(): ReturnType<typeof postgres> {
  * Generate a vector embedding for a given text string via LM Studio.
  */
 export async function getEmbedding(text: string): Promise<number[]> {
+  if (_embeddingConfig?.provider === "local") {
+    if (!text || typeof text !== "string" || !text.trim()) {
+      throw new Error(`[EMBED] Refusing to embed empty/undefined text (received: ${JSON.stringify(text)})`);
+    }
+
+    const provider = await getLocalEmbeddingProvider();
+    const embedding = await provider.embedQuery(text);
+
+    console.log(`[EMBED] Generated ${embedding.length}-dim vector via OpenClaw local provider for: "${text.substring(0, 50)}..."`);
+    return embedding;
+  }
+
   if (!LM_STUDIO_URL) {
     throw new Error(`[EMBED] Cannot get embedding. Configuration not injected.`);
   }

@@ -33,7 +33,7 @@
   ],
   "author": "Christopher Little",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "openclaw": {
     "extensions": [
       "./dist/index.js"
@@ -49,6 +49,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
+    "openclaw": "^2026.3.28",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }

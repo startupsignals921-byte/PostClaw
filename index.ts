@@ -6,10 +6,11 @@ export { getSql, LM_STUDIO_URL, POSTCLAW_DB_URL, EMBEDDING_MODEL, getEmbedding, 
 export { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, storeMemory, updateMemory, linkMemories } from "./services/memoryService.js";
 export { listPersonas, getPersona, createPersona, updatePersona, deletePersona } from "./services/personaService.js";
 
-import { getSql } from "./services/db.js";
-import { stopService } from "./scripts/sleep_cycle.js";
-import { stopDashboard } from "./dashboard/server.js";
+import { getSql, validateEmbeddingDimension } from "./services/db.js";
+import { runSleepCycle, startService, stopService } from "./scripts/sleep_cycle.js";
+import { startDashboard, stopDashboard } from "./dashboard/server.js";
 import { listPersonas, getPersona, createPersona, updatePersona, deletePersona } from "./services/personaService.js";
+import { createPostClawMemoryRuntime } from "./services/runtimeMemory.js";
 import {
   type ChatMessage,
   type ContentPart,
@@ -31,7 +32,9 @@ export type { ChatMessage, ContentPart, ToolCallRecord } from "./schemas/validat
 // =============================================================================
 
 const processedEvents = new Set<string>();
-let _registered = false;
+let _runtimeBootstrapInitialized = false;
+let _sleepServiceStarted = false;
+let _dashboardStarted = false;
 
 import { getCurrentConfig, loadConfig } from "./services/config.js";
 
@@ -51,6 +54,7 @@ let lastReceivedMessage: string = "";
 import { getEmbedding, setEmbeddingConfig, setDbUrl } from "./services/db.js";
 import { ensureAgent, searchPostgres, logEpisodicMemory, logEpisodicToolCall, fetchPersonaContext, storeMemory, updateMemory, linkMemories } from "./services/memoryService.js";
 import { Type } from "@sinclair/typebox";
+import { definePluginEntry } from "openclaw/plugin-sdk/core";
 /**
  * Extracts the text content from the last user message in a messages array.
  */
@@ -69,21 +73,31 @@ function extractUserText(messages: ChatMessage[]): string {
   return "";
 }
 
+function resolveEmbeddingConfig(memoryConfig: any) {
+  if (memoryConfig && typeof memoryConfig === "object") {
+    return memoryConfig;
+  }
+
+  return {
+    provider: "remote",
+    model: "text-embedding-nomic-embed-text-v2-moe",
+    remote: {
+      baseUrl: "http://127.0.0.1:1234/v1",
+    },
+  };
+}
+
 // =============================================================================
 // OPENCLAW PLUGIN — Default export for plugin loader
 // =============================================================================
 
-const openclawPostgresPlugin = {
+const openclawPostgresPlugin = definePluginEntry({
   id: "postclaw",
   name: "PostClaw",
+  kind: "memory",
   description: "PostgreSQL-backed RAG, memory, and persona management",
 
   register(api: any) {
-    if (_registered) {
-      return;
-    }
-    _registered = true;
-
     // Detect when invoked as a one-shot CLI subcommand (e.g. `openclaw postclaw sleep`).
     // In that case we only need the CLI command registrations below — hooks, tools,
     // and background services are gateway-only and produce unwanted noise in CLI runs.
@@ -133,9 +147,7 @@ const openclawPostgresPlugin = {
           .action(async (file: string, opts: { agentId?: string }) => {
             // Ensure embedding config is set from OpenClaw config before running
             const memCfg = api.config?.agents?.defaults?.memorySearch;
-            const llmUrl = memCfg?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
-            const embModel = memCfg?.remote?.model || memCfg?.model || "text-embedding-nomic-embed-text-v2-moe";
-            setEmbeddingConfig(llmUrl, embModel);
+            setEmbeddingConfig(resolveEmbeddingConfig(memCfg), api.config);
 
             // Apply dbUrl from plugin config
             const pluginCfg = api.config?.plugins?.entries?.postclaw?.config;
@@ -160,9 +172,7 @@ const openclawPostgresPlugin = {
           .action(async (opts: { agentId?: string }) => {
             // Ensure embedding config is set from OpenClaw config before running
             const memCfg = api.config?.agents?.defaults?.memorySearch;
-            const llmUrl = memCfg?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
-            const embModel = memCfg?.remote?.model || memCfg?.model || "text-embedding-nomic-embed-text-v2-moe";
-            setEmbeddingConfig(llmUrl, embModel);
+            setEmbeddingConfig(resolveEmbeddingConfig(memCfg), api.config);
 
             // Apply dbUrl from plugin config
             const pluginCfg = api.config?.plugins?.entries?.postclaw?.config;
@@ -170,7 +180,6 @@ const openclawPostgresPlugin = {
               setDbUrl(pluginCfg.dbUrl);
             }
 
-            const { runSleepCycle } = await import("./scripts/sleep_cycle.js");
             await runSleepCycle({
               agentId: opts.agentId,
             });
@@ -190,11 +199,8 @@ const openclawPostgresPlugin = {
               setDbUrl(pluginCfg.dbUrl);
             }
             const memCfg = api.config?.agents?.defaults?.memorySearch;
-            const llmUrl = memCfg?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
-            const embModel = memCfg?.remote?.model || memCfg?.model || "text-embedding-nomic-embed-text-v2-moe";
-            setEmbeddingConfig(llmUrl, embModel);
+            setEmbeddingConfig(resolveEmbeddingConfig(memCfg), api.config);
 
-            const { startDashboard } = await import("./dashboard/server.js");
             startDashboard({
               port: opts.port ? parseInt(opts.port, 10) : undefined,
               bindAddress: opts.bind,
@@ -228,23 +234,23 @@ const openclawPostgresPlugin = {
 
     // Extract LLM configuration from OpenClaw (defaulting to localhost if not found)
     const memoryConfig = api.config?.agents?.defaults?.memorySearch;
-    const llmUrl = memoryConfig?.remote?.baseUrl || "http://127.0.0.1:1234/v1";
-    const llmModel = memoryConfig?.remote?.model || memoryConfig?.model || "text-embedding-nomic-embed-text-v2-moe";
-    setEmbeddingConfig(llmUrl, llmModel);
+    setEmbeddingConfig(resolveEmbeddingConfig(memoryConfig), api.config);
+    api.registerMemoryRuntime(createPostClawMemoryRuntime() as any);
 
-    const agentId = "main";
-    const workspaceDir = api.config?.workspaceDir;
-    ensureAgent(agentId, workspaceDir).then(() => {
-      loadConfig(agentId).then(() => {
-        console.log("[PostClaw] Configuration loaded successfully");
-        // Verify that the configured embedding model dimensions match the schema
-        import("./services/db.js").then(({ validateEmbeddingDimension }) => {
+    if (!_runtimeBootstrapInitialized) {
+      _runtimeBootstrapInitialized = true;
+      const agentId = "main";
+      const workspaceDir = api.config?.workspaceDir;
+      ensureAgent(agentId, workspaceDir).then(() => {
+        loadConfig(agentId).then(() => {
+          console.log("[PostClaw] Configuration loaded successfully");
+          // Verify that the configured embedding model dimensions match the schema
           validateEmbeddingDimension(agentId).catch((err) => {
-             console.error("[PostClaw] Failed initial embedding validation check:", err);
+            console.error("[PostClaw] Failed initial embedding validation check:", err);
           });
         });
       });
-    });
+    }
 
     // -------------------------------------------------------------------------
     // before_prompt_build — Prune + replace system prompt, inject RAG context
@@ -827,37 +833,39 @@ Changing content will re-embed the persona for situational matching. Categories 
     // BACKGROUND SERVICE — Start sleep cycle on an interval
     // ─────────────────────────────────────────────────────────────────────────
     const sleepIntervalHours = api.config?.plugins?.entries?.postclaw?.config?.sleepIntervalHours;
-    if (sleepIntervalHours !== 0) {
+    if (sleepIntervalHours !== 0 && !_sleepServiceStarted) {
       // Start the background sleep cycle service (0 = disabled)
-      import("./scripts/sleep_cycle.js").then(({ startService }) => {
+      try {
         const config = getCurrentConfig();
         startService({
           intervalHours: sleepIntervalHours || 6,
           config: config.sleep
         });
-      }).catch((err) => {
+        _sleepServiceStarted = true;
+      } catch (err) {
         console.error("[PostClaw] Failed to start sleep service:", err);
-      });
+      }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // BACKGROUND SERVICE — Optional dashboard server
     // ─────────────────────────────────────────────────────────────────────────
     const dashboardEnabled = pluginConfig?.dashboardEnabled;
-    if (dashboardEnabled) {
-      import("./dashboard/server.js").then(({ startDashboard }) => {
+    if (dashboardEnabled && !_dashboardStarted) {
+      try {
         startDashboard({
           port: pluginConfig?.dashboardPort,
           bindAddress: pluginConfig?.dashboardBindAddress,
         });
-      }).catch((err) => {
+        _dashboardStarted = true;
+      } catch (err) {
         console.error("[PostClaw] Failed to start dashboard:", err);
-      });
+      }
     }
 
     console.log("[PostClaw] Plugin hooks registered successfully");
   },
-};
+});
 
 export default openclawPostgresPlugin;
 
